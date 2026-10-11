@@ -14,7 +14,6 @@ mcrs_minecraft_block_predicate.workspace = true
 bevy_app = { workspace = true, optional = true }
 bevy_asset = { workspace = true, optional = true }
 bevy_reflect = { workspace = true, optional = true }
-mcrs_minecraft_assets = { workspace = true, optional = true }
 bevy_math.workspace = true
 mcrs_minecraft_chunk.workspace = true
 mcrs_minecraft_core.workspace = true
@@ -25,6 +24,7 @@ mcrs_minecraft_worldgen_density.workspace = true
 mcrs_minecraft_worldgen_surface.workspace = true
 mcrs_minecraft_worldgen_feature.workspace = true
 mcrs_minecraft_worldgen_structure.workspace = true
+piper = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -37,7 +37,7 @@ bevy = [
     "dep:bevy_app",
     "dep:bevy_asset",
     "dep:bevy_reflect",
-    "dep:mcrs_minecraft_assets",
+    "dep:piper",
     "mcrs_minecraft_core/bevy",
     "mcrs_minecraft_registry/bevy",
     "mcrs_minecraft_worldgen_density/bevy",
