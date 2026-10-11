@@ -35,6 +35,9 @@ bevy_log = { version = "0.19.1" }
 bevy_reflect = "0.19.1"
 bevy_platform = "0.19.1"
 bevy_state = "0.19.1"
+# Only a floor under bevy_asset's file reads: 0.2.4 can report EOF before the
+# last chunk of a file.
+piper = "0.2.5"
 proc-macro2 = "1.0.103"
 syn = "2.0.110"
 quote = "1.0.42"

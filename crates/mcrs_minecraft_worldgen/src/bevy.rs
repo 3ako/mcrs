@@ -2,7 +2,6 @@ use bevy_app::{App, Plugin};
 use bevy_asset::io::Reader;
 use bevy_asset::{Asset, AssetApp, AssetLoader, LoadContext};
 use bevy_reflect::TypePath;
-use mcrs_minecraft_assets::asset::read_all;
 use mcrs_minecraft_block_predicate::provider::Holder;
 use mcrs_minecraft_core::{ResourceLocation, VERSION};
 use mcrs_minecraft_registry::{Registered, RegistrySet};
@@ -98,7 +97,8 @@ impl AssetLoader for TemplateLoader {
         _settings: &Self::Settings,
         load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
-        let bytes = read_all(reader).await?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
         let template =
             mcrs_minecraft_nbt::nbt_compress::from_gzip_bytes::<Template, _>(bytes.as_slice())?;
         if template.data_version != VERSION.world_version {
