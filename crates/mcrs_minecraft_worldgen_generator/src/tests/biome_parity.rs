@@ -7,15 +7,15 @@ use super::multi_noise_biomes::overworld_table;
 use crate::multi_noise_palettes;
 
 const MAGIC: &[u8; 8] = b"MCBIOME0";
-const BLOCKS: usize = 16 * 16 * 16;
+pub(super) const BLOCKS: usize = 16 * 16 * 16;
 
-struct Column {
+pub(super) struct Column {
     seed: u64,
-    chunk_x: i32,
-    chunk_z: i32,
+    pub(super) chunk_x: i32,
+    pub(super) chunk_z: i32,
     min_section: i32,
     palette: Vec<String>,
-    sections: Vec<Vec<u32>>,
+    pub(super) sections: Vec<Vec<u32>>,
 }
 
 impl Column {
@@ -28,7 +28,7 @@ impl Column {
     }
 }
 
-fn read_dump() -> Vec<Column> {
+pub(super) fn read_dump() -> Vec<Column> {
     let mut r = bytes::Bytes::from(fixture("biome_containers").dump(MAGIC));
     let columns = (0..r.get_u32_le())
         .map(|_| {
@@ -45,11 +45,6 @@ fn read_dump() -> Vec<Column> {
                         let (id, run) = (r.get_u32_le(), r.get_u32_le());
                         cells.extend(std::iter::repeat_n(id, run as usize));
                     }
-                    assert_eq!(
-                        cells.len(),
-                        BLOCKS,
-                        "a section of chunk {chunk_x},{chunk_z} is short"
-                    );
                     cells
                 })
                 .collect();

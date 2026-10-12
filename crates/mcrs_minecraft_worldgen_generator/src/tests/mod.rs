@@ -7,14 +7,16 @@ mod base_height;
 #[cfg(test)]
 mod beta_biome_grid;
 #[cfg(test)]
-mod beta_cave_parity;
+mod beta_cave_capture;
 #[cfg(test)]
 mod beta_ore_distribution;
 pub(crate) mod beta_surface;
 #[cfg(test)]
-mod beta_surface_parity;
+mod beta_surface_capture;
 #[cfg(test)]
 mod biome_parity;
+#[cfg(test)]
+mod biome_pins;
 #[cfg(test)]
 mod biome_upscale;
 #[cfg(test)]
@@ -59,9 +61,13 @@ pub mod surface;
 #[cfg(test)]
 mod surface_parity;
 #[cfg(test)]
+mod surface_pins;
+#[cfg(test)]
 mod template_manifest;
 #[cfg(test)]
 mod template_parity;
+#[cfg(test)]
+mod template_pins;
 pub mod trees;
 
 mod support;
