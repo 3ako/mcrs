@@ -1,9 +1,9 @@
 use crate::metadata::{Kind, Workspace};
 use crate::scope::{self, Head, Scope};
 use crate::trigger::{Check, Trigger};
-use crate::{gate, marker, size, unused_deps};
+use crate::{gate, marker, mutation, size, unused_deps};
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -145,6 +145,16 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
         Check::UnusedDeps => {
             unused_deps::check(&ctx.root, ctx.base()?, &ctx.head, ctx.workspace()?)
         }
+        Check::MutationConfig => {
+            let packages = mutation_packages(ctx)?;
+            mutation::config::check(
+                &ctx.root,
+                ctx.base()?,
+                &ctx.head,
+                ctx.workspace()?,
+                &packages,
+            )
+        }
         Check::Fmt => fmt(ctx),
         Check::Clippy => clippy(ctx),
         Check::Test => test(ctx),
@@ -173,6 +183,22 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
             "commit every file the build needs",
         ),
     }
+}
+
+fn mutation_packages(ctx: &Context) -> Result<Vec<String>, String> {
+    let workspace = ctx.workspace()?;
+    let owners: BTreeSet<String> = if ctx.trigger == Trigger::Ci {
+        workspace.packages.iter().map(|p| p.name.clone()).collect()
+    } else {
+        ctx.changes()?
+            .paths
+            .iter()
+            .filter(|path| path.ends_with(".rs"))
+            .filter_map(|path| workspace.owner(path))
+            .map(|package| package.name.clone())
+            .collect()
+    };
+    Ok(owners.into_iter().collect())
 }
 
 fn fmt(ctx: &Context) -> Outcome {

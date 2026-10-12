@@ -1,3 +1,4 @@
+use crate::mutation::config::{self, CONFIG_FILE as MUTANTS_FILE};
 use crate::scope::{self, Head};
 use crate::size::{self, LIMITS_FILE};
 use crate::unused_deps::{self, EXEMPTIONS_FILE};
@@ -22,10 +23,11 @@ struct Sides<'a> {
 type Matcher = fn(&str) -> bool;
 type Judge = fn(&Sides) -> Result<Direction, String>;
 
-const DIRECTIONS: [(Matcher, Judge); 4] = [
+const DIRECTIONS: [(Matcher, Judge); 5] = [
     (is_limits_file, limits_direction),
     (is_attributes_file, attributes_direction),
     (is_exemptions_file, exemptions_direction),
+    (is_mutants_file, mutants_direction),
     (is_quality_file, quality_direction),
 ];
 
@@ -35,6 +37,10 @@ fn is_limits_file(path: &str) -> bool {
 
 fn is_exemptions_file(path: &str) -> bool {
     path == EXEMPTIONS_FILE
+}
+
+fn is_mutants_file(path: &str) -> bool {
+    path == MUTANTS_FILE
 }
 
 fn is_attributes_file(path: &str) -> bool {
@@ -97,6 +103,28 @@ fn exemptions_direction(sides: &Sides) -> Result<Direction, String> {
         Some(head) if !head.is_subset(&base) => Direction::Loosening,
         Some(head) if head.len() < base.len() => Direction::Tightening,
         Some(_) => Direction::Unchanged,
+    })
+}
+
+fn mutants_direction(sides: &Sides) -> Result<Direction, String> {
+    let Some(base) = sides.base else {
+        return Ok(Direction::Unchanged);
+    };
+    let base = config::parse_shape(base)
+        .map_err(|e| format!("{MUTANTS_FILE} at the base is malformed: {e}"))?;
+    let Some(head) = sides.head.and_then(|text| config::parse_shape(text).ok()) else {
+        return Ok(Direction::Loosening);
+    };
+    if !head.shares_keys_with(&base) {
+        return Ok(Direction::Loosening);
+    }
+    let (before, after) = (base.exclusions(), head.exclusions());
+    Ok(if !after.is_subset(&before) {
+        Direction::Loosening
+    } else if after.len() < before.len() {
+        Direction::Tightening
+    } else {
+        Direction::Unchanged
     })
 }
 
@@ -243,6 +271,24 @@ mod tests {
     }
 
     const EXEMPTIONS: &str = EXEMPTIONS_FILE;
+    const MUTANTS: &str = crate::mutation::config::CONFIG_FILE;
+
+    fn mutants_file(changed_key: &str, entries: &[(&str, &str)]) -> String {
+        let mut text = String::from(
+            "test_tool = \"nextest\"\nprofile = \"mutants\"\nadditional_cargo_test_args = [\"--profile=mutants\", \"--no-tests=pass\"]\n",
+        );
+        text.push_str(if changed_key.is_empty() {
+            "gitignore = true\n"
+        } else {
+            changed_key
+        });
+        text.push_str("exclude_re = [\n");
+        for (pattern, reason) in entries {
+            text.push_str(&format!("    \"{pattern}\", # {reason}\n"));
+        }
+        text.push_str("]\n");
+        text
+    }
 
     fn pairs(list: &[(&str, &str)], reason: &str) -> String {
         list.iter()
@@ -393,6 +439,105 @@ mod tests {
                     Expect::Pass("no gate change"),
                 )
             },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")]))],
+                ..row(
+                    "an added mutation exclusion beside a crate file fails",
+                    vec![
+                        put(
+                            MUTANTS,
+                            &mutants_file("", &[("^a$", "equivalent"), ("^b$", "equivalent")]),
+                        ),
+                        crate_change(),
+                    ],
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")]))],
+                ..row(
+                    "an added mutation exclusion alone passes",
+                    vec![put(
+                        MUTANTS,
+                        &mutants_file("", &[("^a$", "equivalent"), ("^b$", "equivalent")]),
+                    )],
+                    Expect::Pass("gate configuration loosened alone"),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")]))],
+                ..row(
+                    "a widened mutation exclusion pattern beside a crate file fails",
+                    vec![
+                        put(MUTANTS, &mutants_file("", &[("^a.*$", "equivalent")])),
+                        crate_change(),
+                    ],
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: vec![put(
+                    MUTANTS,
+                    &mutants_file("", &[("^a$", "equivalent"), ("^b$", "equivalent")]),
+                )],
+                ..row(
+                    "a removed mutation exclusion beside a crate file passes",
+                    vec![
+                        put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")])),
+                        crate_change(),
+                    ],
+                    Expect::Pass("gate configuration tightened"),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")]))],
+                ..row(
+                    "a reworded mutation exclusion reason beside a crate file passes",
+                    vec![
+                        put(
+                            MUTANTS,
+                            &mutants_file("", &[("^a$", "the sign cannot change")]),
+                        ),
+                        crate_change(),
+                    ],
+                    Expect::Pass("no gate change"),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[]))],
+                ..row(
+                    "a changed mutation configuration key beside a crate file fails",
+                    vec![
+                        put(MUTANTS, &mutants_file("gitignore = false\n", &[])),
+                        crate_change(),
+                    ],
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[]))],
+                ..row(
+                    "a deleted mutation configuration beside a crate file fails",
+                    vec![del(MUTANTS), crate_change()],
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: vec![put(MUTANTS, &mutants_file("", &[]))],
+                ..row(
+                    "an unparsable mutation configuration beside a crate file fails",
+                    vec![put(MUTANTS, "not toml ["), crate_change()],
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            row(
+                "a mutation configuration absent from the base is an introduction beside a crate file",
+                vec![
+                    put(MUTANTS, &mutants_file("", &[("^a$", "equivalent")])),
+                    crate_change(),
+                ],
+                Expect::Pass("no gate change"),
+            ),
             row("a limit raise alone passes", vec![raise()], loosened),
             row(
                 "a limit raise with a crate file fails",
