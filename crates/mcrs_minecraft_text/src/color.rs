@@ -235,7 +235,6 @@ impl TryFrom<&str> for NamedColor {
             "black" => Ok(NamedColor::Black),
             "dark_blue" => Ok(NamedColor::DarkBlue),
             "dark_green" => Ok(NamedColor::DarkGreen),
-            "dark_aqua" => Ok(NamedColor::DarkAqua),
             "dark_red" => Ok(NamedColor::DarkRed),
             "dark_purple" => Ok(NamedColor::DarkPurple),
             "gold" => Ok(NamedColor::Gold),
