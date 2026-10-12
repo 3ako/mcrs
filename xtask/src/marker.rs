@@ -1,11 +1,13 @@
 use crate::git;
 use crate::scope::{self, Head};
-use std::collections::BTreeSet;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const CRATE: &str = "mutants";
 const SKIP: &str = "skip";
 const EXCLUDE: &str = "exclude_re";
+const IN_PLACE_MARKER: [&str; 3] = ["/* ~ changed by ", "cargo-mutants", " ~ */"];
 
 fn listing(repo: &Path, args: &[&str], strip: Option<&str>) -> Result<Vec<String>, String> {
     let found = git::output(repo, args).map_err(|e| e.to_string())?;
@@ -131,27 +133,44 @@ fn from_git(repo: &Path, prefix: &str, paths: &[String]) -> Result<Vec<(String, 
         .collect()
 }
 
-fn grep_args<'a>(extra: &[&'a str], rev: Option<&'a str>) -> Vec<&'a str> {
+fn grep_args<'a>(pattern: &'a str, extra: &[&'a str], rev: Option<&'a str>) -> Vec<&'a str> {
     let mut args = vec!["grep"];
     args.extend(extra);
-    args.extend(["-a", "-l", "-z", "-F", "-e", CRATE]);
+    args.extend(["-a", "-l", "-z", "-F", "-e", pattern]);
     args.extend(rev);
     args
 }
 
-pub fn check(repo: &Path, head: &Head) -> Result<String, String> {
+fn candidates(
+    repo: &Path,
+    head: &Head,
+    pattern: &str,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    match head {
+        Head::Worktree => Ok((
+            listing(repo, &grep_args(pattern, &[], None), None)?,
+            listing(repo, &grep_args(pattern, &["--cached"], None), None)?,
+        )),
+        Head::Commit(sha) => {
+            let found = listing(
+                repo,
+                &grep_args(pattern, &[], Some(sha)),
+                Some(&format!("{sha}:")),
+            )?;
+            Ok((found, Vec::new()))
+        }
+    }
+}
+
+fn attribute_problem(repo: &Path, head: &Head) -> Result<Option<String>, String> {
+    let (working, staged) = candidates(repo, head, CRATE)?;
     let files = match head {
         Head::Worktree => {
-            let working = listing(repo, &grep_args(&[], None), None)?;
-            let staged = listing(repo, &grep_args(&["--cached"], None), None)?;
             let mut files = from_working_tree(repo, &working)?;
             files.extend(from_git(repo, ":", &staged)?);
             files
         }
-        Head::Commit(sha) => {
-            let found = listing(repo, &grep_args(&[], Some(sha)), Some(&format!("{sha}:")))?;
-            from_git(repo, &format!("{sha}:"), &found)?
-        }
+        Head::Commit(sha) => from_git(repo, &format!("{sha}:"), &working)?,
     };
     let hits: BTreeSet<(&str, usize)> = files
         .iter()
@@ -162,16 +181,145 @@ pub fn check(repo: &Path, head: &Head) -> Result<String, String> {
         })
         .collect();
     if hits.is_empty() {
-        return Ok(String::new());
+        return Ok(None);
     }
     let places: Vec<String> = hits
         .into_iter()
         .map(|(path, line)| format!("{path}:{line}"))
         .collect();
-    Err(format!(
+    Ok(Some(format!(
         "the mutation-testing skip attribute appears at {}; remove it, because mutation exclusions belong in the mutants configuration",
         places.join(", ")
-    ))
+    )))
+}
+
+fn in_place_problem(repo: &Path, head: &Head) -> Result<Option<String>, String> {
+    let (working, staged) = candidates(repo, head, &IN_PLACE_MARKER.concat())?;
+    let paths: BTreeSet<String> = working.into_iter().chain(staged).collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "cargo-mutants' in-place marker comment appears in {}; a mutation run was interrupted while a mutant was applied, so restore the files with git",
+        paths.into_iter().collect::<Vec<_>>().join(", ")
+    )))
+}
+
+type Dependencies = BTreeMap<String, Dependency>;
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Dependency {
+    Version(String),
+    Detailed(Detail),
+}
+
+#[derive(Deserialize)]
+struct Detail {
+    package: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct Tables {
+    #[serde(default)]
+    dependencies: Dependencies,
+    #[serde(default, rename = "dev-dependencies", alias = "dev_dependencies")]
+    dev: Dependencies,
+    #[serde(default, rename = "build-dependencies", alias = "build_dependencies")]
+    build: Dependencies,
+}
+
+#[derive(Deserialize)]
+struct Manifest {
+    #[serde(flatten)]
+    own: Tables,
+    #[serde(default)]
+    workspace: WorkspaceTable,
+    #[serde(default)]
+    target: BTreeMap<String, Tables>,
+}
+
+#[derive(Default, Deserialize)]
+struct WorkspaceTable {
+    #[serde(default)]
+    dependencies: Dependencies,
+}
+
+impl Tables {
+    fn names_the_crate(&self) -> bool {
+        [&self.dependencies, &self.dev, &self.build]
+            .into_iter()
+            .any(names_the_crate)
+    }
+}
+
+fn renamed_from(dependency: &Dependency) -> Option<&str> {
+    match dependency {
+        Dependency::Detailed(detail) => detail.package.as_deref(),
+        Dependency::Version(_version) => None,
+    }
+}
+
+fn names_the_crate(dependencies: &Dependencies) -> bool {
+    dependencies
+        .iter()
+        .any(|(name, dependency)| name == CRATE || renamed_from(dependency) == Some(CRATE))
+}
+
+fn dependency_problem(repo: &Path, head: &Head) -> Result<Option<String>, String> {
+    let is_manifest = |path: &String| path == "Cargo.toml" || path.ends_with("/Cargo.toml");
+    let manifests: Vec<String> = scope::tracked(repo, head)?
+        .into_iter()
+        .filter(is_manifest)
+        .collect();
+    let files = match head {
+        Head::Worktree => {
+            let mut files = from_git(repo, ":", &manifests)?;
+            let on_disk: Vec<String> = manifests
+                .iter()
+                .filter(|path| repo.join(path).exists())
+                .cloned()
+                .collect();
+            files.extend(from_working_tree(repo, &on_disk)?);
+            files
+        }
+        Head::Commit(sha) => from_git(repo, &format!("{sha}:"), &manifests)?,
+    };
+    let mut named = BTreeSet::new();
+    for (path, bytes) in &files {
+        let text = String::from_utf8_lossy(bytes);
+        let manifest: Manifest = toml::from_str(&text)
+            .map_err(|e| format!("{path} is not a manifest cargo accepts: {}", e.message()))?;
+        if manifest.own.names_the_crate()
+            || names_the_crate(&manifest.workspace.dependencies)
+            || manifest.target.values().any(Tables::names_the_crate)
+        {
+            named.insert(path.as_str());
+        }
+    }
+    if named.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "a dependency on the {CRATE} crate, under its own name or renamed, appears in {}; remove it, because mutation exclusions belong in the mutants configuration",
+        named.into_iter().collect::<Vec<_>>().join(", ")
+    )))
+}
+
+pub fn check(repo: &Path, head: &Head) -> Result<String, String> {
+    let problems: Vec<String> = [
+        attribute_problem(repo, head)?,
+        in_place_problem(repo, head)?,
+        dependency_problem(repo, head)?,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if problems.is_empty() {
+        Ok(String::new())
+    } else {
+        Err(problems.join("; "))
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +564,89 @@ mod tests {
         repo.commit("one");
         let message = check(&repo.0, &Head::Commit("0".repeat(40))).unwrap_err();
         assert!(message.contains("git grep"), "{message}");
+    }
+
+    const MARKER_PARTS: [&str; 3] = ["/* ~ changed by ", "cargo-mutants", " ~ */"];
+
+    fn marked(template: &str) -> Vec<u8> {
+        template
+            .replace("{MARK}", &MARKER_PARTS.concat())
+            .into_bytes()
+    }
+
+    #[test]
+    fn the_in_place_marker_comment_fails_in_every_file_kind() {
+        let rows: [(&str, &str, &str); 4] = [
+            ("a Rust file", "src/a.rs", "fn f() -> u8 { 0 {MARK} }\n"),
+            (
+                "a tracked file of another kind",
+                "notes/log.txt",
+                "{MARK}\n",
+            ),
+            ("a file with a NUL byte", "src/b.rs", "// a\0b\n{MARK}\n"),
+            ("a manifest", "crates/x/Cargo.toml", "# {MARK}\n"),
+        ];
+        for (name, path, template) in rows {
+            for place in [Place::Commit, Place::Staged] {
+                let (repo, head) = setup("in-place", place, &[(path, marked(template))]);
+                let message = check(&repo.0, &head).unwrap_err();
+                assert!(
+                    message.contains(path) && message.contains("in-place"),
+                    "{name} ({place:?}): {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dependency_on_the_attribute_crate_fails_under_any_name_or_table() {
+        let rows: [(&str, &str, &str); 5] = [
+            (
+                "a dev dependency",
+                "crates/x/Cargo.toml",
+                "[dev-dependencies]\nmutants = \"25\"\n",
+            ),
+            (
+                "a workspace dependency",
+                "Cargo.toml",
+                "[workspace.dependencies]\nmutants = \"25\"\n",
+            ),
+            (
+                "a target dependency",
+                "crates/y/Cargo.toml",
+                "[target.'cfg(unix)'.dependencies]\nmutants = \"25\"\n",
+            ),
+            (
+                "a renamed dependency",
+                "crates/z/Cargo.toml",
+                "[dependencies]\nskipper = { package = \"mutants\", version = \"25\" }\n",
+            ),
+            (
+                "a dependency written as a table",
+                "crates/w/Cargo.toml",
+                "[build-dependencies.mutants]\nversion = \"25\"\n",
+            ),
+        ];
+        for (name, path, text) in rows {
+            for place in [Place::Commit, Place::Staged] {
+                let (repo, head) = setup("manifest", place, &[(path, text.as_bytes().to_vec())]);
+                let message = check(&repo.0, &head).unwrap_err();
+                assert!(message.contains(path), "{name} ({place:?}): {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_dependency_with_a_longer_name_and_a_clean_manifest_pass() {
+        let manifest =
+            b"[dependencies]\nmutants_helper = \"1\"\nserde = { workspace = true }\n".to_vec();
+        for place in [Place::Commit, Place::Staged] {
+            let (repo, head) = setup(
+                "manifest-ok",
+                place,
+                &[("crates/x/Cargo.toml", manifest.clone())],
+            );
+            assert_eq!(check(&repo.0, &head), Ok(String::new()), "{place:?}");
+        }
     }
 }

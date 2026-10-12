@@ -4,6 +4,7 @@ pub enum Check {
     GateConfig,
     MutationMarker,
     UnusedDeps,
+    MutationConfig,
     Fmt,
     Clippy,
     Test,
@@ -19,6 +20,7 @@ impl Check {
             Check::GateConfig => "gate-config",
             Check::MutationMarker => "mutation-marker",
             Check::UnusedDeps => "unused-deps",
+            Check::MutationConfig => "mutation-config",
             Check::Fmt => "fmt",
             Check::Clippy => "clippy",
             Check::Test => "test",
@@ -75,7 +77,7 @@ impl Trigger {
         match self {
             Trigger::Edit => "after a file is written: change size, mutation markers, formatting",
             Trigger::Commit => {
-                "before a commit: change size, gate configuration, mutation markers, unused dependencies, formatting, clippy"
+                "before a commit: change size, gate configuration, mutation markers, unused dependencies, mutation configuration, formatting, clippy"
             }
             Trigger::Push => "before a push: every check that ci runs",
             Trigger::Ci => "on every pull request and every push to main: all checks",
@@ -103,12 +105,21 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
     use Check::*;
     match trigger {
         Trigger::Edit => &[Size, MutationMarker, Fmt],
-        Trigger::Commit => &[Size, GateConfig, MutationMarker, UnusedDeps, Fmt, Clippy],
+        Trigger::Commit => &[
+            Size,
+            GateConfig,
+            MutationMarker,
+            UnusedDeps,
+            MutationConfig,
+            Fmt,
+            Clippy,
+        ],
         Trigger::Push | Trigger::Ci => &[
             Size,
             GateConfig,
             MutationMarker,
             UnusedDeps,
+            MutationConfig,
             Fmt,
             Clippy,
             Test,
@@ -273,6 +284,22 @@ mod tests {
                     "{trigger:?} lists {late:?} after another check"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_mutation_configuration_is_checked_after_unused_deps_and_before_fmt() {
+        let runs_it = [Trigger::Commit, Trigger::Push, Trigger::Ci];
+        for trigger in Trigger::ALL {
+            let listed = checks(trigger);
+            let position = listed.iter().position(|&c| c == Check::MutationConfig);
+            if !runs_it.contains(&trigger) {
+                assert_eq!(position, None, "{trigger:?}");
+                continue;
+            }
+            let position = position.unwrap_or_else(|| panic!("{trigger:?} lacks the check"));
+            assert_eq!(listed[position - 1], Check::UnusedDeps, "{trigger:?}");
+            assert_eq!(listed[position + 1], Check::Fmt, "{trigger:?}");
         }
     }
 

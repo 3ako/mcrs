@@ -3,6 +3,7 @@ mod gate;
 mod git;
 mod marker;
 mod metadata;
+mod mutation;
 mod scope;
 mod size;
 mod trigger;
@@ -19,6 +20,9 @@ const DEFAULT_BASE_REF: &str = "origin/main";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("mutants") {
+        return mutation::cli(&args[1..]);
+    }
     let invocation = match trigger::from_args(&args) {
         Ok(invocation) => invocation,
         Err(problem) => {

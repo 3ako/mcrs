@@ -960,6 +960,60 @@ was the faster one only because the load happened to be lower, and a one-second 
 inside that spread. What they do show is that adding it does not move a clean workspace check
 outside the noise, and that a change in a dependent crate does not rebuild it.
 
+## Mutation testing
+
+Scenario: cargo-mutants 27.1.0 over cargo-nextest 0.9.143 (60fa45f63, 2026-08-04), rustc
+1.100.0-nightly (5db7f4be8, 2026-09-01), at `abbf93528efc497285affe1c62142c5f03824bea`, on the
+reference machine's 16 logical cores and 128 GiB. The cargo profile is `mutants`
+(`inherits = "test"`, `debug = "none"`), which keeps the `opt-level = 3` of every dependency and of
+the crates the dev profile raises; both readings were 3. The nextest profile is `mutants`. Mutants
+ran in place in a nested git worktree of the checkout at that commit, in cargo-mutants' own order
+with slice sharding, with `--baseline=run` and a 1800 s test and 3600 s build timeout so that no
+timeout cut a run. Medians are over the mutants of one run, from the per-phase durations in
+`outcomes.json`: build over all mutants, test over the mutants that reached a test phase, wall as
+build plus test per mutant. Each row is one run. "Own" is the crate's own tests; "gate" is the
+crate plus its direct dependents, which is the scope a changed crate is tested in. The machine was
+never idle (other builds and indexing ran alongside), so every time is an upper bound.
+
+| run | test packages | mutants | caught / missed / timeout / unviable | build s | test s | wall s | load at start / end |
+|---|---|---|---|---|---|---|---|
+| `mcrs_minecraft_random`, own | 1 | 310 | 170 / 122 / 0 / 18 | 0.48 | 0.36 | 0.83 | 12.25 / 35.74 |
+| `mcrs_minecraft_random`, gate, first run | 13 | 310 | 236 / 56 / 0 / 18 | 20.2 | 5.29 | 29.1 | 12.03 / 16.43 |
+| `mcrs_minecraft_random`, gate, second run | 13 | 310 | 236 / 56 / 0 / 18 | 14.9 | 5.05 | 23.8 | 12.69 / 30.83 |
+| `mcrs_minecraft_worldgen_density`, shard 0/32 (52 of 1,644), own | 1 | 52 | 23 / 23 / 0 / 6 | 4.09 | 0.71 | 4.79 | 7.02 / 10.52 |
+| `mcrs_minecraft_worldgen_density`, shard 0/32, gate | 10 | 52 | 35 / 11 / 0 / 6 | 12.2 | 26.6 | 38.8 | 10.52 / 49.95 |
+| `mcrs_minecraft_core`, one mutant (`BoundingBox::intersects` returning `true`), gate | 50 | 1 | 1 / 0 / 0 / 0 | 511.6 | 61.6 | 573.2 | 6.28 / 415.89 |
+
+The core row is one mutant, so its numbers are not medians. Its build is the first build of 50
+packages, under a load that rose to 416; a core mutant rebuilds core and every dependent each time,
+which is why core is the worst case for build time.
+
+Determinism: the two gate runs of `mcrs_minecraft_random` agree on all 310 mutants. Their sorted
+lists of (name with line and column, outcome) are equal, and `xtask mutants compare` on the two
+output directories prints `identical: 310 mutants`. A first attempt one commit earlier differed in
+3 of 310 mutants: two corpus tests failed with an "EOF while parsing" from a read race that
+`abbf93528` fixes, and one build failed to link. The figures above are from the rerun at
+`abbf93528`.
+
+A crate with no default-tier test cannot score full marks. `mcrs_minecraft_keys` lists no mutant
+(it holds generated markers and ids), so the empty-selection rule was measured on
+`mcrs_minecraft_profile`, which has no test of its own, with its own crate as the only test
+package: 41 mutants, 0 caught, 32 missed, 9 unviable. Listing the whole workspace without building
+takes 6 s and finds 41,270 mutants.
+
+Timeouts and shard size, each from a measured number:
+
+- Test timeout 360 s: five times the longest test phase of a gate-scope run (64.65 s, a mutant
+  that loops until nextest terminates it after four 15 s periods), 323 s, rounded up to a whole
+  minute. The kill-matrix profile gives the same value (five times 65.87 s, 329 s, rounded up).
+- Build timeout 840 s: five times the longest build after the first mutant of a run (163.4 s, in
+  the density gate run), 817 s, rounded up to a whole minute. The first build of core, 511.6 s,
+  is under it, but a core shard may need more.
+- Shard size 23 mutants: `floor(3600 / (4 * 38.79))`, so that a shard at the density gate's
+  median wall time of 38.79 s, with a factor of four of headroom, stays inside an hour. A sweep
+  of 120 such shards is 2,760 mutants.
+- The jar-fetching setup script adds about 0.41 s to a run that selects a `jar::` test.
+
 ## Findings not yet acted on
 
 - UI layout and its siblings cost about 130 µs per frame with nothing visible.
