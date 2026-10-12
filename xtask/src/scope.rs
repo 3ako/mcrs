@@ -629,6 +629,7 @@ pub(crate) mod tests {
                 "edition": "2024",
                 "manifest_path": format!("/w/{dir}/Cargo.toml").replace("//", "/"),
                 "dependencies": dependencies,
+                "targets": [],
             })
         };
         let metadata = json!({

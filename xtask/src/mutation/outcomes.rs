@@ -1,5 +1,5 @@
 use crate::mutation::tool;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -15,6 +15,7 @@ struct Lab {
 struct ScenarioOutcome {
     scenario: Scenario,
     summary: Summary,
+    log_path: Option<String>,
     phase_results: Vec<PhaseResult>,
 }
 
@@ -73,7 +74,8 @@ enum Summary {
     Timeout,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum Class {
     Caught,
     Timeout,
@@ -132,22 +134,48 @@ pub(crate) fn score(caught: u64, timeout: u64, missed: u64) -> Option<u64> {
     (denominator > 0).then(|| (caught + timeout) * 100 / denominator)
 }
 
-pub(crate) fn parse(json: &str) -> Result<BTreeMap<String, Class>, String> {
+#[derive(Debug, PartialEq)]
+pub(crate) struct Measured {
+    pub name: String,
+    pub class: Class,
+    pub log_path: String,
+}
+
+pub(crate) fn parse_measured(json: &str) -> Result<Vec<Measured>, String> {
     let lab: Lab = serde_json::from_str(json).map_err(|e| e.to_string())?;
-    let mut set = BTreeMap::new();
-    for outcome in &lab.outcomes {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut measured = Vec::new();
+    for outcome in lab.outcomes {
         let Scenario::Mutant(Named { name }) = &outcome.scenario else {
             continue;
         };
         let class = judge(name, &outcome.phase_results, &outcome.summary)?;
-        if set.insert(name.clone(), class).is_some() {
+        if !seen.insert(name.clone()) {
             return Err(format!("{name} appears twice"));
         }
+        let log_path = outcome
+            .log_path
+            .ok_or_else(|| format!("{name}: the outcome names no log"))?;
+        measured.push(Measured {
+            name: name.clone(),
+            class,
+            log_path,
+        });
     }
-    Ok(set)
+    Ok(measured)
 }
 
-pub(crate) fn load(dir: &Path) -> Result<BTreeMap<String, Class>, String> {
+pub(crate) fn parse(json: &str) -> Result<BTreeMap<String, Class>, String> {
+    Ok(parse_measured(json)?
+        .into_iter()
+        .map(|m| (m.name, m.class))
+        .collect())
+}
+
+fn read_outcomes<T>(
+    dir: &Path,
+    parse: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
     let path = dir.join("outcomes.json");
     let json = std::fs::read_to_string(&path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
@@ -158,6 +186,14 @@ pub(crate) fn load(dir: &Path) -> Result<BTreeMap<String, Class>, String> {
             tool::VERSION
         )
     })
+}
+
+pub(crate) fn load(dir: &Path) -> Result<BTreeMap<String, Class>, String> {
+    read_outcomes(dir, parse)
+}
+
+pub(crate) fn load_measured(dir: &Path) -> Result<Vec<Measured>, String> {
+    read_outcomes(dir, parse_measured)
 }
 
 pub(crate) fn differences(

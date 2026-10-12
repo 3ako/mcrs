@@ -6,6 +6,7 @@ mod metadata;
 mod mutation;
 mod scope;
 mod size;
+mod source;
 mod trigger;
 mod unused_deps;
 

@@ -17,12 +17,20 @@ pub struct Dependency {
     pub local: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub kinds: Vec<String>,
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Debug)]
 pub struct Package {
     pub name: String,
     pub dir: String,
     pub edition: String,
     pub dependencies: Vec<Dependency>,
+    pub targets: Vec<Target>,
 }
 
 #[derive(Debug)]
@@ -42,6 +50,14 @@ struct MetadataPackage {
     manifest_path: String,
     edition: String,
     dependencies: Vec<MetadataDependency>,
+    targets: Vec<MetadataTarget>,
+}
+
+#[derive(Deserialize)]
+struct MetadataTarget {
+    kind: Vec<String>,
+    name: String,
+    src_path: String,
 }
 
 #[derive(Deserialize)]
@@ -99,11 +115,34 @@ impl Workspace {
                         local: dep.path.is_some(),
                     })
                     .collect();
+                let targets = package
+                    .targets
+                    .into_iter()
+                    .map(|target| {
+                        let path = Path::new(&target.src_path)
+                            .strip_prefix(&root)
+                            .ok()
+                            .and_then(Path::to_str)
+                            .ok_or_else(|| {
+                                format!(
+                                    "target {} of {} lies outside the workspace root {root}",
+                                    target.name, package.name
+                                )
+                            })?
+                            .to_owned();
+                        Ok(Target {
+                            kinds: target.kind,
+                            name: target.name,
+                            path,
+                        })
+                    })
+                    .collect::<Result<_, String>>()?;
                 Ok(Package {
                     name: package.name,
                     dir,
                     edition: package.edition,
                     dependencies,
+                    targets,
                 })
             })
             .collect::<Result<_, String>>()?;

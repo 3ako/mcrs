@@ -429,6 +429,7 @@ mod tests {
                 dir: "crates/x".to_owned(),
                 edition: "2024".to_owned(),
                 dependencies: Vec::new(),
+                targets: Vec::new(),
             }],
         };
         ctx.workspace.set(Ok(workspace)).unwrap();
