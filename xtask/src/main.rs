@@ -5,6 +5,7 @@ mod git;
 mod marker;
 mod metadata;
 mod mutation;
+mod parity;
 mod scope;
 mod size;
 mod source;

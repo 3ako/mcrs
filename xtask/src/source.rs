@@ -1,9 +1,10 @@
 use crate::git;
 use crate::scope::{self, Head};
-use proc_macro2::{TokenStream, TokenTree};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use syn::{Attribute, Expr, ExprLit, Item, Lit, Meta};
+use syn::visit::{self, Visit};
+use syn::{Attribute, Expr, ExprLit, Item, Lit, LitStr, Macro, Meta};
 
 pub type Files = BTreeMap<String, String>;
 
@@ -63,8 +64,46 @@ pub fn read_files(repo: &Path, head: &Head, paths: &[String]) -> Result<Files, S
 pub fn parse(path: &str, text: &str) -> Result<syn::File, String> {
     syn::parse_file(text).map_err(|e| {
         let at = e.span().start();
-        format!("{path}:{}: {e}", at.line)
+        format!("{path}:{}: does not parse: {e}", at.line)
     })
+}
+
+pub fn line(span: Span) -> usize {
+    span.start().line
+}
+
+struct StringLiterals(Vec<(String, usize)>);
+
+impl<'ast> Visit<'ast> for StringLiterals {
+    fn visit_attribute(&mut self, attr: &'ast Attribute) {
+        if !attr.path().is_ident("doc") {
+            visit::visit_attribute(self, attr);
+        }
+    }
+
+    fn visit_lit_str(&mut self, lit: &'ast LitStr) {
+        self.0.push((lit.value(), line(lit.span())));
+    }
+
+    fn visit_macro(&mut self, mac: &'ast Macro) {
+        walk_tokens(&mac.tokens, &mut |tokens, at| {
+            let TokenTree::Literal(literal) = &tokens[at] else {
+                return;
+            };
+            let after_doc = at >= 2
+                && matches!(&tokens[at - 1], TokenTree::Punct(p) if p.as_char() == '=')
+                && matches!(&tokens[at - 2], TokenTree::Ident(i) if i == "doc");
+            if let (false, Some(text)) = (after_doc, string_literal(literal)) {
+                self.0.push((text, line(literal.span())));
+            }
+        });
+    }
+}
+
+pub fn string_literals(file: &syn::File) -> Vec<(String, usize)> {
+    let mut found = StringLiterals(Vec::new());
+    found.visit_file(file);
+    found.0
 }
 
 pub fn is_test(attrs: &[Attribute]) -> bool {
@@ -139,15 +178,15 @@ pub fn walk_modules(
     walk.file(root, &[], true, visit)
 }
 
-fn parent(path: &str) -> &str {
+pub fn parent(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
-fn file_name(path: &str) -> &str {
+pub fn file_name(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
-fn join(base: &str, rest: &str) -> String {
+pub fn join(base: &str, rest: &str) -> String {
     let mut parts: Vec<&str> = base.split('/').filter(|p| !p.is_empty()).collect();
     for part in rest.split('/') {
         match part {
@@ -342,11 +381,43 @@ mod tests {
     }
 
     #[test]
+    fn string_literals_are_found_in_code_and_in_macro_bodies_but_not_in_docs() {
+        let text = concat!(
+            "/// documented \"in a doc\"\n",
+            "#[doc = \"also a doc\"]\n",
+            "#[path = \"attribute.rs\"]\n",
+            "mod attributed;\n",
+            "const TYPED: &str = \"typed\";\n",
+            "fn f() {\n",
+            "    let _ = include_str!(\"embedded.txt\");\n",
+            "    nested!(inner!(\"deep\"), r#\"raw\"#, 7, b\"bytes\");\n",
+            "}\n",
+            "macro_rules! m { () => { #[doc = \"macro doc\"] fn g() {} } }\n",
+        );
+        let parsed = parse("a.rs", text).unwrap();
+        let mut found = string_literals(&parsed);
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                ("attribute.rs".to_owned(), 3),
+                ("deep".to_owned(), 8),
+                ("embedded.txt".to_owned(), 7),
+                ("raw".to_owned(), 8),
+                ("typed".to_owned(), 5),
+            ]
+        );
+    }
+
+    #[test]
     fn a_syntax_error_names_its_file_and_line() {
         let error = parse("crates/x/src/lib.rs", "fn fine() {}\nfn broken( {\n")
             .err()
             .expect("a syntax error");
-        assert!(error.starts_with("crates/x/src/lib.rs:2:"), "{error}");
+        assert!(
+            error.starts_with("crates/x/src/lib.rs:2: does not parse: "),
+            "{error}"
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub enum Check {
     GateConfig,
     MutationMarker,
     Floors,
+    Parity,
     UnusedDeps,
     MutationConfig,
     Fmt,
@@ -22,6 +23,7 @@ impl Check {
             Check::GateConfig => "gate-config",
             Check::MutationMarker => "mutation-marker",
             Check::Floors => "floors",
+            Check::Parity => "parity",
             Check::UnusedDeps => "unused-deps",
             Check::MutationConfig => "mutation-config",
             Check::Fmt => "fmt",
@@ -38,7 +40,7 @@ impl Check {
     pub const fn is_git_only(self) -> bool {
         matches!(
             self,
-            Check::Size | Check::GateConfig | Check::MutationMarker | Check::Floors
+            Check::Size | Check::GateConfig | Check::MutationMarker | Check::Floors | Check::Parity
         )
     }
 }
@@ -82,9 +84,11 @@ impl Trigger {
 
     pub const fn description(self) -> &'static str {
         match self {
-            Trigger::Edit => "after a file is written: change size, mutation markers, formatting",
+            Trigger::Edit => {
+                "after a file is written: change size, mutation markers, fixture parity, formatting"
+            }
             Trigger::Commit => {
-                "before a commit: change size, gate configuration, mutation markers, mutation floors, unused dependencies, mutation configuration, formatting, clippy"
+                "before a commit: change size, gate configuration, mutation markers, mutation floors, fixture parity, unused dependencies, mutation configuration, formatting, clippy"
             }
             Trigger::Push => {
                 "before a push: every check that ci runs, then the mutants in changed code"
@@ -123,12 +127,13 @@ impl Trigger {
 pub const fn checks(trigger: Trigger) -> &'static [Check] {
     use Check::*;
     match trigger {
-        Trigger::Edit => &[Size, MutationMarker, Fmt],
+        Trigger::Edit => &[Size, MutationMarker, Parity, Fmt],
         Trigger::Commit => &[
             Size,
             GateConfig,
             MutationMarker,
             Floors,
+            Parity,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -139,6 +144,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             GateConfig,
             MutationMarker,
             Floors,
+            Parity,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -154,6 +160,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             GateConfig,
             MutationMarker,
             Floors,
+            Parity,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -164,7 +171,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             ExportedBuild,
         ],
         Trigger::Full | Trigger::Gpu => &[Test],
-        Trigger::Policy => &[Size, GateConfig, MutationMarker, Floors],
+        Trigger::Policy => &[Size, GateConfig, MutationMarker, Floors, Parity],
         Trigger::Mutation => &[Mutation],
     }
 }
@@ -375,6 +382,62 @@ mod tests {
             }
             let position = position.unwrap_or_else(|| panic!("{trigger:?} lacks the check"));
             assert_eq!(listed[position - 1], Check::MutationMarker, "{trigger:?}");
+        }
+    }
+
+    #[test]
+    fn parity_is_the_last_git_only_check_of_every_trigger_that_runs_on_a_pull_request_or_locally() {
+        let carries_it = [
+            Trigger::Edit,
+            Trigger::Commit,
+            Trigger::Push,
+            Trigger::Ci,
+            Trigger::Policy,
+        ];
+        for trigger in Trigger::ALL {
+            let listed = checks(trigger);
+            let position = listed.iter().position(|&c| c == Check::Parity);
+            if !carries_it.contains(&trigger) {
+                assert_eq!(position, None, "{trigger:?}");
+                continue;
+            }
+            let position = position.unwrap_or_else(|| panic!("{trigger:?} lacks the check"));
+            assert!(Check::Parity.is_git_only());
+            assert!(
+                listed[position + 1..]
+                    .iter()
+                    .all(|check| !check.is_git_only()),
+                "{trigger:?} lists a git-only check after parity"
+            );
+            assert_eq!(listed.iter().filter(|&&c| c == Check::Parity).count(), 1);
+        }
+    }
+
+    #[test]
+    fn every_check_and_trigger_has_its_own_name_and_description() {
+        let mut checks: Vec<Check> = Trigger::ALL
+            .into_iter()
+            .flat_map(|t| checks(t).to_vec())
+            .collect();
+        checks.sort_by_key(|check| check.name());
+        checks.dedup();
+        let names: Vec<&str> = checks.iter().map(|check| check.name()).collect();
+        let mut unique = names.clone();
+        unique.dedup();
+        assert_eq!(names, unique);
+        assert!(names.iter().all(|name| !name.is_empty()));
+        assert!(names.contains(&"parity"));
+
+        let mut descriptions: Vec<&str> = Trigger::ALL.iter().map(|t| t.description()).collect();
+        assert!(descriptions.iter().all(|text| text.len() > 20));
+        descriptions.sort_unstable();
+        descriptions.dedup();
+        assert_eq!(descriptions.len(), Trigger::ALL.len());
+        for trigger in [Trigger::Edit, Trigger::Commit] {
+            assert!(
+                trigger.description().contains("fixture parity"),
+                "{trigger:?}"
+            );
         }
     }
 

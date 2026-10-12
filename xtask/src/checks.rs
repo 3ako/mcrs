@@ -1,7 +1,7 @@
 use crate::metadata::{Kind, Workspace};
 use crate::scope::{self, Head, Scope};
 use crate::trigger::{Check, Trigger};
-use crate::{floors, gate, marker, mutation, size, unused_deps};
+use crate::{floors, gate, marker, mutation, parity, size, unused_deps};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -143,6 +143,7 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
         Check::GateConfig => gate::check(&ctx.root, ctx.base()?, &ctx.head),
         Check::MutationMarker => marker::check(&ctx.root, &ctx.head),
         Check::Floors => floors::check(&ctx.root, ctx.base()?, &ctx.head),
+        Check::Parity => parity_check(ctx),
         Check::UnusedDeps => {
             unused_deps::check(&ctx.root, ctx.base()?, &ctx.head, ctx.workspace()?)
         }
@@ -194,6 +195,20 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
             }
         }
     }
+}
+
+fn parity_check(ctx: &Context) -> Outcome {
+    let base = ctx.base()?;
+    if matches!(ctx.trigger, Trigger::Edit | Trigger::Commit) {
+        let changed = scope::changed_paths(&ctx.root, base, &ctx.head)?;
+        return parity::check(
+            &ctx.root,
+            base,
+            &ctx.head,
+            parity::Selection::Changed(&changed),
+        );
+    }
+    parity::check(&ctx.root, base, &ctx.head, parity::Selection::Every)
 }
 
 fn mutation_packages(ctx: &Context) -> Result<Vec<String>, String> {
