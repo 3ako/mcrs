@@ -52,6 +52,8 @@ mod into_text;
 pub use color::Color;
 pub use into_text::IntoText;
 
+pub struct PlainSeparator;
+
 /// Represents formatted text in Minecraft's JSON text format.
 ///
 /// Text is used in various places such as chat, window titles,
