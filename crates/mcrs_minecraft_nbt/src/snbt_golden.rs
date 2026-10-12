@@ -3,6 +3,7 @@
 
 use std::sync::LazyLock;
 
+use mcrs_minecraft_fixtures::fixture;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -47,4 +48,4 @@ pub(crate) struct Golden {
 }
 
 pub(crate) static GOLDEN: LazyLock<Golden> =
-    LazyLock::new(|| serde_json::from_str(include_str!("fixtures/snbt.json")).unwrap());
+    LazyLock::new(|| serde_json::from_str(&fixture("snbt").text()).unwrap());

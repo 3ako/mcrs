@@ -1,3 +1,4 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_item::keys::DataComponentType;
 use serde::Deserialize;
 
@@ -18,8 +19,7 @@ struct Kind {
 
 #[test]
 fn the_kind_table_matches_kinds_json() {
-    let table: Kinds =
-        serde_json::from_str(include_str!("../../fixtures/item/kinds.json")).unwrap();
+    let table: Kinds = serde_json::from_str(&fixture("item_kinds").text()).unwrap();
     assert_eq!(table.kinds.len(), DataComponentType::ALL.len());
     for (kind, row) in DataComponentType::ALL.iter().zip(&table.kinds) {
         assert_eq!(kind.location().path(), row.id);

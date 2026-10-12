@@ -1,6 +1,7 @@
 //! Bytes written by the vanilla packet stream codecs; `id` lines are the registry
 //! ids the capture session had.
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_core::codec::Bounded as Range;
 use mcrs_minecraft_core::{BlockPos, ResourceKey, ResourceLocation};
@@ -16,7 +17,8 @@ use mcrs_minecraft_protocol::text::Text;
 use mcrs_minecraft_protocol::{Bounded, Decode, Encode, ProtoStack, VarInt};
 use mcrs_minecraft_registry::{Id, RegistryLookup};
 
-const GOLDEN: &str = include_str!("../fixtures/inventory_packets_golden.txt");
+static GOLDEN: LazyLock<String> =
+    LazyLock::new(|| mcrs_minecraft_fixtures::fixture("inventory_packets").text());
 
 struct Fixture {
     ids: HashMap<(String, String), u16>,

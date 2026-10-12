@@ -1,9 +1,11 @@
 use bytes::BytesMut;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_protocol::CompressionThreshold;
 use mcrs_minecraft_protocol::decode::PacketDecoder;
 use mcrs_minecraft_protocol::frame::{decompress, split_frame};
+use std::sync::LazyLock;
 
-const GOLDEN: &str = include_str!("../fixtures/frames_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("frames").text());
 
 fn frames() -> Vec<(&'static str, Vec<u8>)> {
     GOLDEN

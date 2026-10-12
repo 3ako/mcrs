@@ -346,12 +346,13 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::LazyLock;
 
+    use mcrs_minecraft_fixtures::fixture;
     use serde::{Serialize, Serializer};
 
     use super::{HashSerializer, hash};
 
     static GOLDEN: LazyLock<BTreeMap<String, i32>> =
-        LazyLock::new(|| serde_json::from_str(include_str!("fixtures/hash_ops.json")).unwrap());
+        LazyLock::new(|| serde_json::from_str(&fixture("hash_ops").text()).unwrap());
 
     fn map<V: Serialize + Clone>(entries: &[(&str, V)]) -> BTreeMap<String, V> {
         entries

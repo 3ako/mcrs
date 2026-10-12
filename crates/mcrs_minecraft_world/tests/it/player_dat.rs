@@ -3,8 +3,10 @@
 //! intact. Compound key order is not compared: vanilla's own compound is a hash map.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_core::VERSION;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::compound::NbtCompound;
 use mcrs_minecraft_nbt::nbt_compress::from_gzip_bytes;
 use mcrs_minecraft_nbt::tag::NbtTag;
@@ -12,7 +14,7 @@ use mcrs_minecraft_world::registries::test_registries;
 use mcrs_minecraft_world::save::{PlayerDat, read_player_dat, write_player_dat};
 use uuid::Uuid;
 
-const VANILLA: &[u8] = include_bytes!("../fixtures/vanilla_player.dat");
+static VANILLA: LazyLock<Vec<u8>> = LazyLock::new(|| fixture("vanilla_player").bytes());
 
 fn temp_world(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("mcrs_player_dat_{name}_{}", std::process::id()));
@@ -48,7 +50,7 @@ fn the_vanilla_file_round_trips_through_the_typed_shape() {
             world
                 .join("players/data")
                 .join(format!("{}.dat", uuid.hyphenated())),
-            VANILLA,
+            VANILLA.as_slice(),
         )
         .unwrap();
 
@@ -121,7 +123,7 @@ fn the_vanilla_file_round_trips_through_the_typed_shape() {
         )
         .unwrap();
 
-        let original: NbtCompound = from_gzip_bytes(VANILLA).unwrap();
+        let original: NbtCompound = from_gzip_bytes(VANILLA.as_slice()).unwrap();
         let ours: NbtCompound = from_gzip_bytes(rewritten.as_slice()).unwrap();
         assert_eq!(
             sorted(&NbtTag::Compound(original.clone())),

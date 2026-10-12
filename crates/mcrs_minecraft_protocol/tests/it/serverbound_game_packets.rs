@@ -1,7 +1,8 @@
 //! Bytes written by the vanilla packet stream codecs for the serverbound game packets.
 
+use mcrs_minecraft_fixtures::fixture;
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use bevy_math::DVec3;
 use mcrs_minecraft_core::{Bounded, ResourceLocation, rl};
@@ -17,7 +18,7 @@ use mcrs_minecraft_protocol::resource_pack::Status;
 use mcrs_minecraft_protocol::{Decode, Encode, Hand, Look, LpVec3, Position, VarInt};
 use uuid::Uuid;
 
-const GOLDEN: &str = include_str!("../fixtures/serverbound_game_packets_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("serverbound_game_packets").text());
 
 fn labels() -> &'static BTreeMap<&'static str, Vec<u8>> {
     static LABELS: OnceLock<BTreeMap<&'static str, Vec<u8>>> = OnceLock::new();

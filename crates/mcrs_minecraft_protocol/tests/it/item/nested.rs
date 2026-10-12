@@ -1,4 +1,5 @@
 use mcrs_minecraft_core::rl;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_protocol::item::EncodeCtx;
 use mcrs_minecraft_protocol::item::decode_component_value;
 use std::collections::BTreeMap;
@@ -31,7 +32,7 @@ struct Case {
 }
 
 fn golden() -> Golden {
-    serde_json::from_str(include_str!("../../fixtures/item/nested_golden.json")).unwrap()
+    serde_json::from_str(&fixture("item_nested").text()).unwrap()
 }
 
 #[test]

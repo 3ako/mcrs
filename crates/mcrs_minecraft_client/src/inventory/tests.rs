@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use bytes::Bytes;
 use mcrs_minecraft_core::codec::Bounded;
 use mcrs_minecraft_core::{ResourceKey, ResourceLocation, rl};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_inventory::{MenuLayout, Slot};
 use mcrs_minecraft_item::keys::MenuType;
 use mcrs_minecraft_item::{
@@ -40,8 +41,7 @@ fn registries() -> &'static RegistrySet {
 }
 use crate::player::Player;
 
-const GOLDEN: &str =
-    include_str!("../../../mcrs_minecraft_protocol/tests/fixtures/inventory_packets_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("inventory_packets").text());
 
 fn golden() -> &'static HashMap<&'static str, Vec<u8>> {
     static PACKETS: OnceLock<HashMap<&'static str, Vec<u8>>> = OnceLock::new();

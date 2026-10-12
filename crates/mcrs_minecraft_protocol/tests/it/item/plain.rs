@@ -1,3 +1,4 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_item::keys::DataComponentType;
 use mcrs_minecraft_nbt::tag::NbtTag;
 use mcrs_minecraft_protocol::item::decode_component_value;
@@ -52,7 +53,7 @@ struct DecodeFailure {
 }
 
 fn golden() -> Golden {
-    serde_json::from_str(include_str!("../../fixtures/item/plain_golden.json")).unwrap()
+    serde_json::from_str(&fixture("item_plain").text()).unwrap()
 }
 
 fn kind(id: &str) -> DataComponentType {

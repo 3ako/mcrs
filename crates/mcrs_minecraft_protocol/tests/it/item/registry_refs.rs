@@ -1,6 +1,8 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_protocol::item::EncodeCtx;
 use mcrs_minecraft_protocol::item::decode_component_value;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_item::keys::DataComponentType;
 use mcrs_minecraft_nbt::compound::NbtCompound;
@@ -10,7 +12,7 @@ use crate::item::harness::{
     TestLookup, from_nbt, hex, in_samples, json_value, nbt_tree, persistent_json, try_from_json,
 };
 
-const GOLDEN: &str = include_str!("../../fixtures/item/registry_refs_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("item_registry_refs").text());
 
 struct Golden {
     kind: DataComponentType,
@@ -61,7 +63,7 @@ fn parse_fixture() -> (TestLookup, Vec<Golden>) {
             outcome,
         });
     }
-    (TestLookup::with_id_lines(GOLDEN), samples)
+    (TestLookup::with_id_lines(&GOLDEN), samples)
 }
 
 /// Vanilla's record codecs read only the keys they know, so the `extra` field

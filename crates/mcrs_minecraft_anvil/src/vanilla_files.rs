@@ -1,16 +1,26 @@
+use std::sync::LazyLock;
+
 use mcrs_minecraft_chunk::SectionKind;
 use mcrs_minecraft_chunk::section::{Biomes, NoiseBiomes};
 use mcrs_minecraft_core::ColumnPos;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::compound::NbtCompound;
 use mcrs_minecraft_nbt::tag::NbtTag;
 
 use crate::tests::write::{Named, assert_same_chunk, root};
 use crate::{ChunkStatus, PaletteNames, RetroGen, parse_chunk, write_chunk};
 
-const FULL: &[u8] = include_bytes!("fixtures/vanilla/chunk_full.nbt");
-const TERRAIN: &[u8] = include_bytes!("fixtures/vanilla/chunk_terrain.nbt");
-const RETROGEN: &[u8] = include_bytes!("fixtures/vanilla/chunk_retrogen.nbt");
-const RETROGEN_MINIMAL: &[u8] = include_bytes!("fixtures/vanilla/chunk_retrogen_minimal.nbt");
+static FULL: LazyLock<Vec<u8>> =
+    LazyLock::new(|| fixture("vanilla_chunk").file("chunk_full.nbt").bytes());
+static TERRAIN: LazyLock<Vec<u8>> =
+    LazyLock::new(|| fixture("vanilla_chunk").file("chunk_terrain.nbt").bytes());
+static RETROGEN: LazyLock<Vec<u8>> =
+    LazyLock::new(|| fixture("vanilla_chunk").file("chunk_retrogen.nbt").bytes());
+static RETROGEN_MINIMAL: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    fixture("vanilla_chunk")
+        .file("chunk_retrogen_minimal.nbt")
+        .bytes()
+});
 
 fn load(bytes: &[u8]) -> Named {
     let (blocks, biomes) = (PaletteNames::new(), PaletteNames::new());
@@ -36,7 +46,7 @@ fn cells(side: usize) -> impl Iterator<Item = (usize, usize, usize)> {
 
 #[test]
 fn a_full_chunk_written_by_the_game_loads() {
-    let loaded = load(FULL);
+    let loaded = load(&FULL);
     let chunk = &loaded.chunk;
     assert_eq!(chunk.pos, ColumnPos::new(3, -2));
     assert_eq!(chunk.min_section_y, -4);
@@ -97,7 +107,7 @@ fn a_full_chunk_written_by_the_game_loads() {
 
 #[test]
 fn a_terrain_proto_chunk_keeps_its_noise_biomes() {
-    let loaded = load(TERRAIN);
+    let loaded = load(&TERRAIN);
     assert_eq!(loaded.chunk.status, ChunkStatus::Terrain);
     let plains = biome(&loaded, "minecraft:plains");
     let forest = biome(&loaded, "minecraft:forest");
@@ -131,7 +141,7 @@ fn a_terrain_proto_chunk_keeps_its_noise_biomes() {
 
 #[test]
 fn a_chunk_with_retrogen_loads_its_record() {
-    let loaded = load(RETROGEN);
+    let loaded = load(&RETROGEN);
     assert_eq!(loaded.chunk.status, ChunkStatus::NoiseBiomes);
     assert_eq!(
         loaded.chunk.retrogen,
@@ -143,7 +153,7 @@ fn a_chunk_with_retrogen_loads_its_record() {
         })
     );
 
-    let minimal = load(RETROGEN_MINIMAL);
+    let minimal = load(&RETROGEN_MINIMAL);
     assert_eq!(
         minimal.chunk.retrogen,
         Some(RetroGen {
@@ -202,10 +212,10 @@ const COMPARED_AS_VALUES: [&str; 3] = ["Heightmaps", "block_entities", "sections
 #[test]
 fn every_chunk_written_by_the_game_round_trips_over_what_the_shape_models() {
     for (name, bytes) in [
-        ("chunk_full", FULL),
-        ("chunk_terrain", TERRAIN),
-        ("chunk_retrogen", RETROGEN),
-        ("chunk_retrogen_minimal", RETROGEN_MINIMAL),
+        ("chunk_full", FULL.as_slice()),
+        ("chunk_terrain", TERRAIN.as_slice()),
+        ("chunk_retrogen", RETROGEN.as_slice()),
+        ("chunk_retrogen_minimal", RETROGEN_MINIMAL.as_slice()),
     ] {
         let original = load(bytes);
         let written = write_chunk(&original.chunk, &original.blocks, &original.biomes).unwrap();

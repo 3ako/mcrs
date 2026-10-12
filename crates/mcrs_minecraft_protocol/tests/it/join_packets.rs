@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_core::{BlockPos, ResourceKey, ResourceLocation, VERSION};
 use mcrs_minecraft_dimension::keys::DIMENSION_TYPE;
@@ -17,7 +18,8 @@ use mcrs_minecraft_protocol::{Bounded, Decode, Encode, GameMode, GlobalPos, RawB
 use mcrs_minecraft_registry::{Id, Registry, RegistrySet};
 use std::sync::Arc;
 
-const GOLDEN: &str = include_str!("../fixtures/join_packets_golden.txt");
+static GOLDEN: LazyLock<String> =
+    LazyLock::new(|| mcrs_minecraft_fixtures::fixture("join_packets").text());
 
 struct Fixture {
     ids: HashMap<(String, String), u16>,
