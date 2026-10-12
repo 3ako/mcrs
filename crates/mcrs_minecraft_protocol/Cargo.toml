@@ -37,6 +37,7 @@ mcrs_minecraft_world = { workspace = true, default-features = false }
 criterion = { version = "0.7", features = ["html_reports"] }
 rand.workspace = true
 serde_json.workspace = true
+mcrs_minecraft_fixtures.workspace = true
 
 [[bench]]
 name = "frame"

@@ -1,4 +1,6 @@
+use mcrs_minecraft_fixtures::fixture;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use bevy_math::DVec3;
 use mcrs_minecraft_core::BlockPos;
@@ -20,7 +22,7 @@ use mcrs_minecraft_protocol::{Decode, Encode, VarInt};
 
 use crate::item::harness::{TestLookup, hex};
 
-const GOLDEN: &str = include_str!("../../fixtures/particles_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("particles").text());
 
 pub(crate) fn golden(key: &str) -> &'static str {
     let prefix = format!("{key} = ");

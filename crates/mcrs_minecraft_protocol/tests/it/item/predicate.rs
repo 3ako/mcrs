@@ -1,3 +1,4 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_item::keys::DataComponentType;
 use mcrs_minecraft_protocol::item::decode_component_value;
 use mcrs_minecraft_protocol::item::{ItemComponentValue, hash_ops};
@@ -27,9 +28,7 @@ fn lookup() -> TestLookup {
 #[test]
 fn predicates_match_the_vanilla_codecs() {
     in_samples(|| {
-        let cases: Vec<Case> =
-            serde_json::from_str(include_str!("../../fixtures/item/predicate_vanilla.json"))
-                .unwrap();
+        let cases: Vec<Case> = serde_json::from_str(&fixture("item_predicate").text()).unwrap();
         assert_eq!(cases.len(), 81);
         let lookup = lookup();
         for case in cases {

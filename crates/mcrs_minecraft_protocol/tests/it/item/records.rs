@@ -1,3 +1,4 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_protocol::item::EncodeCtx;
 use mcrs_minecraft_protocol::item::decode_component_value;
 use std::collections::{BTreeMap, HashMap};
@@ -20,9 +21,11 @@ use crate::item::harness::{TestLookup, from_json, from_nbt, hex, nbt_tree, persi
 
 type Row = HashMap<&'static str, &'static str>;
 
+static TEXT: LazyLock<String> = LazyLock::new(|| fixture("item_records").text());
+
 static GOLDEN: LazyLock<HashMap<&'static str, Row>> = LazyLock::new(|| {
     let mut rows: HashMap<&str, Row> = HashMap::new();
-    for line in include_str!("../../fixtures/item/vanilla_records.txt").lines() {
+    for line in TEXT.lines() {
         let (label, rest) = line.split_once(' ').unwrap();
         let (field, value) = rest.split_once(" = ").unwrap();
         rows.entry(label).or_default().insert(field, value);

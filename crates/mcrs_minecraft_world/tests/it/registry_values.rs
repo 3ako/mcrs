@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use mcrs_minecraft_assets::packs::VANILLA_PACK;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::snbt::parse_tag;
 use mcrs_minecraft_nbt::tag::NbtTag;
 use mcrs_minecraft_registry::RegistrySet;
@@ -31,7 +32,7 @@ struct Golden {
 
 fn golden() -> Golden {
     let mut registries: BTreeMap<String, BTreeMap<String, NbtTag>> = BTreeMap::new();
-    for line in read("tests/fixtures/registry_values.txt").lines() {
+    for line in fixture("registry_values").text().lines() {
         let mut fields = line.splitn(3, ' ');
         let registry = fields.next().unwrap();
         let entries = registries.entry(registry.to_string()).or_default();

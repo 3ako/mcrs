@@ -1,7 +1,9 @@
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_protocol::item::EncodeCtx;
 use mcrs_minecraft_protocol::item::decode_component_value;
 use mcrs_minecraft_sound::SoundEvent;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_core::codec::Bounded;
 use mcrs_minecraft_core::rl;
@@ -16,7 +18,7 @@ use mcrs_minecraft_protocol::text::Text;
 
 use crate::item::harness::{TestLookup, from_json, hex, in_samples, nbt_tree, persistent_json};
 
-const GOLDEN: &str = include_str!("../../fixtures/item/holders_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("item_holders").text());
 
 struct Golden {
     lookup: TestLookup,
@@ -38,7 +40,7 @@ fn golden() -> Golden {
             .insert(key.into(), value.into());
     }
     Golden {
-        lookup: TestLookup::with_id_lines(GOLDEN),
+        lookup: TestLookup::with_id_lines(&GOLDEN),
         samples,
     }
 }

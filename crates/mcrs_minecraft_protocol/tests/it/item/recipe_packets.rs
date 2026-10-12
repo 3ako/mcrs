@@ -1,7 +1,9 @@
 //! The recipe-book packets as the game's stream codecs write them, with the
 //! registry ids the game resolved.
 
+use mcrs_minecraft_fixtures::fixture;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use mcrs_minecraft_core::codec::{Bounded, Validate};
 use mcrs_minecraft_core::{ResourceKey, ResourceLocation, rl};
@@ -33,7 +35,7 @@ use mcrs_minecraft_registry::{HolderSet, RegistryLookup};
 
 use crate::item::harness::{TestLookup, hex, in_samples};
 
-const GOLDEN: &str = include_str!("../../fixtures/recipe_packets_golden.txt");
+static GOLDEN: LazyLock<String> = LazyLock::new(|| fixture("recipe_packets").text());
 
 fn golden() -> (TestLookup, BTreeMap<String, Vec<u8>>) {
     let wires = GOLDEN
@@ -50,7 +52,7 @@ fn golden() -> (TestLookup, BTreeMap<String, Vec<u8>>) {
             (label.to_string(), hex(value))
         })
         .collect();
-    (TestLookup::with_id_lines(GOLDEN), wires)
+    (TestLookup::with_id_lines(&GOLDEN), wires)
 }
 
 fn key(path: &str) -> ResourceKey<Item> {

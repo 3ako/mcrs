@@ -1,3 +1,4 @@
+use mcrs_minecraft_fixtures::fixture;
 use std::io::Cursor;
 
 use mcrs_minecraft_core::rl;
@@ -79,8 +80,7 @@ struct VanillaCase {
 
 #[test]
 fn every_vanilla_fixture_round_trips_through_json_nbt_and_the_wire() {
-    let cases: Vec<VanillaCase> =
-        serde_json::from_str(include_str!("../fixtures/text/vanilla.json")).unwrap();
+    let cases: Vec<VanillaCase> = serde_json::from_str(&fixture("text_vanilla").text()).unwrap();
     assert_eq!(cases.len(), 38);
     for case in cases {
         let name = &case.name;
@@ -187,8 +187,7 @@ const PROBE_DIVERGENCES: &[&str] = &[
 
 #[test]
 fn vanilla_probe_cases_read_and_reject_alike() {
-    let cases: Vec<ProbeCase> =
-        serde_json::from_str(include_str!("../fixtures/text/probe.json")).unwrap();
+    let cases: Vec<ProbeCase> = serde_json::from_str(&fixture("text_probe").text()).unwrap();
     assert_eq!(cases.len(), 97);
     let mut failures = Vec::new();
     for case in cases {
@@ -238,8 +237,7 @@ struct WireCase {
 
 #[test]
 fn vanilla_stream_codec_bytes_decode_and_re_encode() {
-    let cases: Vec<WireCase> =
-        serde_json::from_str(include_str!("../fixtures/text/wire.json")).unwrap();
+    let cases: Vec<WireCase> = serde_json::from_str(&fixture("text_wire").text()).unwrap();
     assert_eq!(cases.len(), 9);
     for case in cases {
         let name = &case.name;
@@ -305,8 +303,7 @@ struct NbtCase {
 
 #[test]
 fn vanilla_nbt_bytes_decode_to_the_same_json_and_re_encode_to_the_same_tags() {
-    let cases: Vec<NbtCase> =
-        serde_json::from_str(include_str!("../fixtures/text/nbt.json")).unwrap();
+    let cases: Vec<NbtCase> = serde_json::from_str(&fixture("text_nbt").text()).unwrap();
     assert_eq!(cases.len(), 55);
     let mut failures = Vec::new();
     for case in cases {

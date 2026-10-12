@@ -1,9 +1,9 @@
 use bytes::Buf;
 use mcrs_minecraft_entity::keys::{Attribute, VillagerProfession};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_registry::RegistrySet;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 const MAGIC: &[u8; 8] = b"MCREGCE0";
 
@@ -21,9 +21,7 @@ struct Census {
 }
 
 fn read_census() -> Census {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/entity/fixtures/registry_census.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let mut r = bytes::Bytes::from(fixture("registry_census").dump(MAGIC));
     let ids = (0..r.get_u32_le())
         .map(|_| {
             let registry = dump_string(&mut r);
