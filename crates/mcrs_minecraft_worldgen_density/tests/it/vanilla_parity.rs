@@ -1,7 +1,7 @@
 use bevy_math::IVec3;
 use mcrs_minecraft_chunk::VoxelId;
 use mcrs_minecraft_core::{ResourceLocation, rl};
-use mcrs_minecraft_fixtures::fixture;
+use mcrs_minecraft_fixtures::{FixtureFile, fixture};
 use mcrs_minecraft_worldgen_density::compile::build_router;
 use mcrs_minecraft_worldgen_density::program::Workspace;
 use mcrs_minecraft_worldgen_density::proto::DensityFunctionHolder;
@@ -25,17 +25,17 @@ const DIVERGENCE_BUDGET: Option<f32> = None;
 #[cfg(feature = "fast")]
 const DIVERGENCE_BUDGET: Option<f32> = Some(1.0e-5);
 
-struct DumpVolume {
-    name: String,
+pub(crate) struct DumpVolume {
+    pub(crate) name: String,
     size: [i32; 3],
     min: [i32; 3],
     step: [i32; 3],
-    values: Vec<f32>,
+    pub(crate) values: Vec<f32>,
 }
 
-struct Dump {
+pub(crate) struct Dump {
     seed: i64,
-    volumes: Vec<DumpVolume>,
+    pub(crate) volumes: Vec<DumpVolume>,
 }
 
 struct Reader<'a> {
@@ -95,7 +95,20 @@ fn read_dump(name: &str, data: &[u8]) -> Dump {
     Dump { seed, volumes }
 }
 
-fn overworld_router(seed: u64) -> NoiseRouter {
+pub(crate) fn lattice_dumps() -> Vec<FixtureFile> {
+    fixture("density")
+        .files()
+        .into_iter()
+        .filter(|file| !file.name().contains("dense"))
+        .collect()
+}
+
+pub(crate) fn dense_dump() -> Dump {
+    let file = fixture("density").file("overworld_s42_c0_0_dense.bin");
+    read_dump(file.name(), &file.dump(MAGIC))
+}
+
+pub(crate) fn overworld_router(seed: u64) -> NoiseRouter {
     let settings: NoiseGeneratorSettings =
         corpus::read("noise_settings", &rl!("minecraft:overworld").to_arc());
     let registry: BTreeMap<ResourceLocation, DensityFunctionHolder> =
@@ -142,12 +155,7 @@ mod exhaustive {
     /// Every root the compiler supports, over all fifteen lattice dumps.
     #[test]
     fn supported_roots_match_the_vanilla_oracle() {
-        let dumps: Vec<_> = fixture("density")
-            .files()
-            .into_iter()
-            .filter(|file| !file.name().contains("dense"))
-            .collect();
-        assert_eq!(dumps.len(), 15, "expected the fifteen lattice dumps");
+        let dumps = lattice_dumps();
 
         let mut report: BTreeMap<String, Diff> = BTreeMap::new();
         let mut seen_names: Vec<String> = Vec::new();
@@ -217,8 +225,7 @@ mod exhaustive {
     /// be distinguished.
     #[test]
     fn final_density_matches_the_dense_oracle() {
-        let file = fixture("density").file("overworld_s42_c0_0_dense.bin");
-        let dump = read_dump(file.name(), &file.dump(MAGIC));
+        let dump = dense_dump();
         let router = overworld_router(dump.seed as u64);
 
         let v = dump
@@ -226,7 +233,6 @@ mod exhaustive {
             .iter()
             .find(|v| v.name == "final_density")
             .expect("dense dump holds final_density");
-        assert_eq!(v.values.len(), 98_304, "16x384x16 dense");
 
         let ours = fill(&router, FINAL_DENSITY, v);
         let mut mismatched = 0usize;
@@ -254,36 +260,6 @@ mod exhaustive {
             within,
             "{mismatched}/{} mismatched, worst {worst:e} {example:?}",
             v.values.len()
-        );
-    }
-
-    /// The schedule decides per fill, not per column: an arm's cone is skipped only
-    /// when no position in the whole volume selects it. Over a box as large as a
-    /// chunk that is a weaker predicate than a per-column one, so the share it skips
-    /// is asserted rather than trusted.
-    #[test]
-    fn the_branch_schedule_skips_a_real_share_of_an_overworld_chunk() {
-        let router = overworld_router(42);
-        let volume = SampleGrid::dense(IVec3::new(16, 384, 16), IVec3::new(0, -64, 0));
-        let mut out = vec![f32::NAN; volume.len()];
-        let mut ws = Workspace::new();
-        ws.take_count();
-        router
-            .program
-            .fill(&mut ws, &volume, FINAL_DENSITY, &mut out);
-
-        let count = ws.take_count();
-        let total = count.evaluated + count.skipped;
-        let share = count.skipped as f64 / total as f64;
-        println!(
-            "final_density over 16x384x16: {} of {total} node evaluations skipped ({:.1}%)",
-            count.skipped,
-            share * 100.0
-        );
-        assert!(
-            share > 0.15,
-            "the schedule skipped only {:.1}% of {total} evaluations",
-            share * 100.0
         );
     }
 }

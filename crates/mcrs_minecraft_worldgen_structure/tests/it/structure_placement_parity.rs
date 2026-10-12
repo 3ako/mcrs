@@ -12,30 +12,30 @@ use std::collections::BTreeMap;
 
 const MAGIC: &[u8; 8] = b"MCPLACE0";
 
-struct DumpGrid {
+pub(crate) struct DumpGrid {
     x0: i32,
     z0: i32,
     side: i32,
-    cells: Vec<((i32, i32), bool)>,
+    pub(crate) cells: Vec<((i32, i32), bool)>,
 }
 
-struct DumpSet {
+pub(crate) struct DumpSet {
     id: String,
     spacing: i32,
     separation: i32,
-    grids: Vec<DumpGrid>,
+    pub(crate) grids: Vec<DumpGrid>,
 }
 
-struct DumpDim {
-    sets: Vec<DumpSet>,
+pub(crate) struct DumpDim {
+    pub(crate) sets: Vec<DumpSet>,
 }
 
-struct DumpSeed {
+pub(crate) struct DumpSeed {
     seed: i64,
-    dims: Vec<DumpDim>,
+    pub(crate) dims: Vec<DumpDim>,
 }
 
-fn read_dump() -> Vec<DumpSeed> {
+pub(crate) fn read_dump() -> Vec<DumpSeed> {
     let source = fixture("structure_placement").file("structure_cells.bin");
     let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let seeds = (0..r.get_u32_le())
@@ -128,7 +128,6 @@ mod exhaustive {
     #[test]
     fn potential_chunks_match_the_reference() {
         let placements = Placements::load();
-        let mut cases = 0usize;
         for seed in read_dump() {
             for set in seed.dims.iter().flat_map(|dim| &dim.sets) {
                 let (placement, _) = placements.spread(&set.id);
@@ -151,12 +150,10 @@ mod exhaustive {
                             set.id,
                             seed.seed
                         );
-                        cases += 1;
                     }
                 }
             }
         }
-        assert_eq!(cases, 5 * 21 * (49 * 49 + 25 * 25));
     }
 
     #[test]

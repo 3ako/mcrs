@@ -73,8 +73,8 @@ struct DumpPlacement {
 
 type CaseKey = (String, String, u8, u8);
 
-struct DumpCase {
-    kind: u8,
+pub(super) struct DumpCase {
+    pub(super) kind: u8,
     key: CaseKey,
     rotation: u8,
     liquid: u8,
@@ -86,13 +86,13 @@ struct DumpCase {
     placements: Vec<DumpPlacement>,
 }
 
-struct Dump {
+pub(super) struct Dump {
     types: Vec<String>,
-    blocks: Vec<(String, String, bool)>,
+    pub(super) blocks: Vec<(String, String, bool)>,
     rotation_palette: Vec<String>,
     rotations: Vec<[u32; 6]>,
     palette: Vec<String>,
-    cases: Vec<DumpCase>,
+    pub(super) cases: Vec<DumpCase>,
 }
 
 fn read_dump() -> Dump {
@@ -200,7 +200,15 @@ fn read_dump() -> Dump {
     }
 }
 
-fn dump() -> &'static Dump {
+pub(super) fn block_entity_types() -> BTreeMap<&'static str, &'static str> {
+    dump()
+        .blocks
+        .iter()
+        .map(|(block, kind, _)| (block.as_str(), kind.as_str()))
+        .collect()
+}
+
+pub(super) fn dump() -> &'static Dump {
     static DUMP: LazyLock<Dump> = LazyLock::new(read_dump);
     &DUMP
 }
@@ -301,7 +309,7 @@ fn palette_index() -> &'static HashMap<VoxelId, u32> {
     &INDEX
 }
 
-fn region(min: BlockPos, max: BlockPos, floor: u8) -> BoxRegion {
+pub(super) fn region(min: BlockPos, max: BlockPos, floor: u8) -> BoxRegion {
     let world = WorldStates::clone(&program().world);
     let air = world.air_states.clone();
     let fluid = world.any_fluid.clone();
@@ -577,7 +585,7 @@ fn feature_key(feature: &Feature) -> Option<CaseKey> {
     Some((templates, processors, 0, 0))
 }
 
-fn feature_program(node: &Feature) -> FeatureProgram {
+pub(super) fn feature_program(node: &Feature) -> FeatureProgram {
     let tables = one_step(
         vec![Arc::new(CompiledPlacedFeature {
             id: None,
@@ -682,11 +690,7 @@ mod exhaustive {
     #[test]
     fn the_loot_seeded_kinds_and_every_template_block_entity_id_are_pinned() {
         let dump = dump();
-        let type_of: BTreeMap<&str, &str> = dump
-            .blocks
-            .iter()
-            .map(|(block, kind, _)| (block.as_str(), kind.as_str()))
-            .collect();
+        let type_of = block_entity_types();
         let mut seeded: BTreeSet<&str> = BTreeSet::new();
         for (_, kind, loot_seeded) in &dump.blocks {
             if *loot_seeded {
@@ -706,9 +710,6 @@ mod exhaustive {
                 seeded.contains(id),
                 "{id}: RandomizableContainer membership"
             );
-        }
-        for sand in ["minecraft:suspicious_sand", "minecraft:suspicious_gravel"] {
-            assert_eq!(type_of[sand], "minecraft:brushable_block");
         }
 
         let frozen = frozen_shared();
@@ -852,33 +853,6 @@ mod exhaustive {
         report(&faults, placements);
     }
 
-    /// A region whose bottom sits just under the floor clamps the fossil to ten
-    /// blocks above that bottom, into the air, where every corner is empty; the
-    /// three draws before the corner check still happen.
-    #[test]
-    fn a_fossil_with_too_many_empty_corners_places_nothing() {
-        let node = &corpus_features().features[&rl!("minecraft:fossil_coal").to_arc()];
-        let program = feature_program(node);
-        let generator = program.generator_at(0, 0).expect("a fossil compiles");
-        let mut region = region(BlockPos::new(-16, 60, -16), BlockPos::new(31, 99, 31), 0);
-        let mut run = program.run(RunScratch::default());
-        let mut rng = WorldgenRandom::new(7);
-        let placed = generator.place(
-            &mut run,
-            &mut region,
-            &mut rng,
-            BlockPos::new(8, 64, 8),
-            &|_| true,
-        );
-        assert!(!placed);
-        assert!(region.writes.is_empty());
-        let mut expected = WorldgenRandom::new(7);
-        for bound in [4, 8, 10] {
-            expected.next_i32_bound(bound);
-        }
-        assert_eq!(rng.next_i64(), expected.next_i64());
-    }
-
     #[test]
     fn every_template_feature_places_as_the_reference_does() {
         let dump = dump();
@@ -963,7 +937,6 @@ mod exhaustive {
         let mut faults = Vec::new();
         let mut placements = 0;
         let cases: Vec<&DumpCase> = dump.cases.iter().filter(|case| case.kind == 2).collect();
-        assert_eq!(cases.len(), 78);
         for case in cases {
             let template = templates
                 .entry(case.key.0.as_str())

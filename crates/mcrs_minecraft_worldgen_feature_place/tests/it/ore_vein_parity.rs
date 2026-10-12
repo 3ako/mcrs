@@ -15,7 +15,7 @@ use mcrs_minecraft_worldgen_testing::{dump_placements, dump_string};
 use std::collections::HashMap;
 
 const MAGIC: &[u8; 8] = b"MCOREVN0";
-const MIN_Y: i32 = -64;
+pub(crate) const MIN_Y: i32 = -64;
 const MAX_Y: i32 = 320;
 
 struct DumpTarget {
@@ -25,7 +25,7 @@ struct DumpTarget {
     state: String,
 }
 
-struct DumpCase {
+pub(crate) struct DumpCase {
     name: String,
     seed: i64,
     origin: [i32; 3],
@@ -37,7 +37,7 @@ struct DumpCase {
     placements: Vec<([i32; 3], String)>,
 }
 
-fn read_dump() -> Vec<DumpCase> {
+pub(crate) fn read_dump() -> Vec<DumpCase> {
     let source = fixture("ore_vein");
     let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let case_count = r.get_u32_le() as usize;
@@ -103,7 +103,12 @@ fn air_world(air: VoxelId) -> WorldStates {
 /// Stone everywhere within the build height around `origin` and air for a
 /// few blocks past it, with `ocean_floor` standing in for
 /// `level.getHeight(OCEAN_FLOOR_WG, …)`.
-fn stone_world(origin: [i32; 3], stone: VoxelId, air: VoxelId, ocean_floor: i32) -> BoxRegion {
+pub(crate) fn stone_world(
+    origin: [i32; 3],
+    stone: VoxelId,
+    air: VoxelId,
+    ocean_floor: i32,
+) -> BoxRegion {
     let (x, z) = (origin[0], origin[2]);
     let mut world = BoxRegion::new(
         BlockPos::new(x - 48, MIN_Y - 8, z - 48),
@@ -120,76 +125,12 @@ fn stone_world(origin: [i32; 3], stone: VoxelId, air: VoxelId, ocean_floor: i32)
     world
 }
 
-/// The probe box is the one thing the flat-world dump cannot pin, because the
-/// oracle stands `getHeight` in for a constant. At size 20 from (0, 64, 0) the
-/// reference's arithmetic gives a spread of 2.5 rounded up to 3 and a max radius
-/// of 2, so columns -5..=4 are tested against y 60.
-#[test]
-fn the_probe_box_is_the_reference_box() {
-    let cfg = CompiledOre {
-        targets: vec![OreReplacement {
-            target: Rule::AlwaysTrue,
-            state: VoxelId(3),
-        }],
-        size: 20,
-        discard_chance_on_air_exposure: 0.0,
-    };
-    let probe = |floor_at: Option<[i32; 2]>| {
-        let mut world = stone_world([0, 64, 0], VoxelId(1), VoxelId(0), 59)
-            .with_height(move |_, _, x, z| if floor_at == Some([x, z]) { 60 } else { 59 });
-        place_modern_ore(
-            &cfg,
-            &mut world,
-            &mut WorldgenRandom::new(42),
-            BlockPos::new(0, 64, 0),
-            &mut OreScratch::default(),
-        )
-    };
-    assert!(!probe(None), "every column below y 60 must abort the vein");
-    assert!(probe(Some([-5, -5])), "the box starts at -5");
-    assert!(probe(Some([4, 4])), "the box ends at 4");
-    assert!(!probe(Some([5, 5])), "the box does not reach 5");
-    assert!(!probe(Some([-6, 0])), "the box does not reach -6");
-    assert!(!probe(Some([0, 6])), "the box does not reach 6");
-}
-
-/// The three segment draws are spent before the probe, so a vein whose probe box
-/// is entirely below the floor still advances the source.
-#[test]
-fn a_failed_probe_still_costs_the_segment_draws() {
-    let cfg = CompiledOre {
-        targets: vec![OreReplacement {
-            target: Rule::AlwaysTrue,
-            state: VoxelId(3),
-        }],
-        size: 16,
-        discard_chance_on_air_exposure: 0.0,
-    };
-    let mut world = stone_world([0, 200, 0], VoxelId(1), VoxelId(0), MIN_Y);
-    let mut rng = WorldgenRandom::new(42);
-    assert!(!place_modern_ore(
-        &cfg,
-        &mut world,
-        &mut rng,
-        BlockPos::new(0, 200, 0),
-        &mut OreScratch::default(),
-    ));
-    assert!(world.writes.is_empty());
-
-    let mut replay = WorldgenRandom::new(42);
-    replay.next_f32();
-    replay.next_i32_bound(3);
-    replay.next_i32_bound(3);
-    assert_eq!(rng, replay, "an aborted vein must draw exactly three times");
-}
-
 mod exhaustive {
     use super::*;
 
     #[test]
     fn every_dumped_vein_matches_block_for_block() {
         let cases = read_dump();
-        assert_eq!(cases.len(), 21, "the dump lost cases");
         // One buffer across every case, the way a column's run holds it: the first
         // vein starts from an empty one and the rest would show any residue the
         // previous vein left behind.

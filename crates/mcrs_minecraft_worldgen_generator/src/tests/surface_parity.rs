@@ -11,7 +11,7 @@ use super::surface::{biome_ids, overworld_material_router, surfaced_column};
 
 const MAGIC: &[u8; 8] = b"MCSURFC0";
 
-const DUMPS: [&str; 7] = [
+pub(super) const DUMPS: [&str; 7] = [
     "surface_s42_c0_0.bin",
     "surface_s42_c100_100.bin",
     "surface_s2_c3_-7.bin",
@@ -21,7 +21,8 @@ const DUMPS: [&str; 7] = [
     "surface_s2_c20_-3.bin",
 ];
 
-struct Dump {
+pub(super) struct Dump {
+    pub(super) settings: String,
     seed: u64,
     chunk_x: i32,
     chunk_z: i32,
@@ -43,9 +44,9 @@ impl Dump {
     }
 }
 
-fn read_dump(name: &str) -> Dump {
+pub(super) fn read_dump(name: &str) -> Dump {
     let mut r = bytes::Bytes::from(fixture("surface").file(name).dump(MAGIC));
-    assert_eq!(dump_string(&mut r), "minecraft:overworld");
+    let settings = dump_string(&mut r);
     let seed = r.get_i64_le() as u64;
     let chunk_x = r.get_i32_le();
     let chunk_z = r.get_i32_le();
@@ -60,6 +61,7 @@ fn read_dump(name: &str) -> Dump {
     assert!(!r.has_remaining(), "trailing bytes in {name}");
     assert_eq!(cells.len(), (16 * 16 * height) as usize, "{name} is short");
     Dump {
+        settings,
         seed,
         chunk_x,
         chunk_z,

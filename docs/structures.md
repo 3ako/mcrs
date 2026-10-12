@@ -1281,7 +1281,7 @@ mismatch (R5 of `worldgen.md`):
   sample lands in the redraw interval.
 
 Beta, against Project-Poseidon through the existing parity harness
-(`generate/tests/beta_cave_parity.rs` is the model): the populate stream up to
+(`crates/mcrs_minecraft_worldgen_generator/src/tests/beta_cave_capture.rs` is the model): the populate stream up to
 and including the eight dungeon attempts (B2, Appendix E) for a seed set,
 with room boxes, floor blocks, chest positions, loot and spawner ids; and,
 once dungeons exist in `mcrs:beta_populate`, the ore positions that D11 of
