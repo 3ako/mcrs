@@ -547,7 +547,7 @@ pub(crate) fn merge_dirs(repo: &Path, package: &str, dirs: &[PathBuf]) -> Result
     Ok(matrix)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| format!("could not write {}: {e}", path.display()))
 }
@@ -559,7 +559,7 @@ pub(crate) fn shard_name(shard: Option<(u32, u32)>) -> String {
     )
 }
 
-fn direct_dependencies(workspace: &Workspace, package: &str) -> Vec<String> {
+pub(crate) fn direct_dependencies(workspace: &Workspace, package: &str) -> Vec<String> {
     let Some(found) = workspace.packages.iter().find(|p| p.name == package) else {
         return Vec::new();
     };
@@ -570,6 +570,52 @@ fn direct_dependencies(workspace: &Workspace, package: &str) -> Vec<String> {
         .map(|dep| dep.name.as_str())
         .collect();
     names.into_iter().map(str::to_owned).collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PassSpec {
+    pub name: String,
+    pub package: String,
+    pub test_packages: Vec<String>,
+}
+
+pub(crate) fn passes(workspace: &Workspace, package: &str) -> Result<Vec<PassSpec>, String> {
+    let Scope::Packages(floor) =
+        Scope::Packages(vec![package.to_owned()]).with_dependents(workspace)
+    else {
+        return Err("the floor scope of a package is a list of packages".to_owned());
+    };
+    let mut found = vec![PassSpec {
+        name: "pass-a".to_owned(),
+        package: package.to_owned(),
+        test_packages: floor,
+    }];
+    for dependency in direct_dependencies(workspace, package) {
+        found.push(PassSpec {
+            name: format!("pass-b-{dependency}"),
+            package: dependency,
+            test_packages: vec![package.to_owned()],
+        });
+    }
+    Ok(found)
+}
+
+pub(crate) fn shard_dirs(shards: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = std::fs::read_dir(shards).map_err(|e| {
+        format!(
+            "could not read {}: {e}; download the shard artifacts first",
+            shards.display()
+        )
+    })?;
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            dirs.push(path);
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
 }
 
 pub(crate) fn measure(
@@ -614,23 +660,15 @@ pub(crate) fn measure(
         commit: &commit,
         shard,
     };
-    let Scope::Packages(floor) =
-        Scope::Packages(vec![package.to_owned()]).with_dependents(&workspace)
-    else {
-        return Err("the floor scope of a package is a list of packages".to_owned());
-    };
-    let own = measuring.pass("pass-a", package, &floor)?;
-    write_json(&shard_dir.join("pass-a.json"), &own)?;
-    for dependency in direct_dependencies(&workspace, package) {
-        let name = format!("pass-b-{dependency}");
-        let pass = measuring.pass(&name, &dependency, &[package.to_owned()])?;
-        write_json(&shard_dir.join(format!("{name}.json")), &pass)?;
+    for spec in passes(&workspace, package)? {
+        let pass = measuring.pass(&spec.name, &spec.package, &spec.test_packages)?;
+        write_json(&shard_dir.join(format!("{}.json", spec.name)), &pass)?;
     }
     Ok(shard_dir)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn id(binary: &str, name: &str) -> TestId {
@@ -870,7 +908,7 @@ mod tests {
         assert_eq!(whole["pass-a"].tests.len(), 1);
     }
 
-    mod cargo_mutants {
+    pub(crate) mod cargo_mutants {
         use super::*;
         use crate::scope::tests::Repo;
 
@@ -878,7 +916,7 @@ mod tests {
         const HIGH: &str = "pub fn marker() -> bool {\n    true\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn doubling_twice_quadruples() {\n        assert_eq!(low::double(low::double(1)), 4);\n    }\n\n    #[test]\n    fn always_true() {\n        assert!(true);\n    }\n\n    mod exhaustive {\n        #[test]\n        fn a_sweep() {\n            assert_eq!(low::inc(1), 2);\n        }\n    }\n}\n";
         const NEXTEST: &str = "[profile.default]\ndefault-filter = \"not test(/(^|::)(exhaustive|gpu|online|vanilla_server)::/)\"\n\n[profile.mutants]\nfail-fast = true\nretries = 0\n\n[profile.mutants-matrix]\nfail-fast = false\nretries = 0\nstatus-level = \"fail\"\nfinal-status-level = \"fail\"\nfailure-output = \"never\"\n";
 
-        fn floor_workspace(label: &str) -> Repo {
+        pub(crate) fn floor_workspace(label: &str) -> Repo {
             let repo = Repo::new(label);
             repo.init();
             repo.write(".gitignore", "/target\n");

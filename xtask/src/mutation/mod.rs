@@ -5,8 +5,10 @@ pub(crate) mod diff;
 pub(crate) mod matrix;
 pub(crate) mod outcomes;
 pub(crate) mod plan;
+pub(crate) mod ratchet;
 pub(crate) mod run;
 pub(crate) mod surface;
+pub(crate) mod sweep;
 pub(crate) mod tool;
 pub(crate) mod verdict;
 pub(crate) mod worktree;
@@ -50,8 +52,11 @@ const USAGE: &str = "usage: xtask mutants plan
        xtask mutants shard <index>
        xtask mutants compare <mutants.out> <mutants.out>
        xtask mutants matrix <crate> [--shard <k>/<n>]
-       xtask mutants matrix-merge <crate> <shard dir>...
-       xtask mutants protected [<crate>] [--list]";
+       xtask mutants matrix-merge <crate> [<shard dir>...]
+       xtask mutants protected [<crate>] [--list]
+       xtask mutants sweep-plan [--crate <name>] [--kind sweep|matrix]
+       xtask mutants merge --run-id <n> --run-url <url> --date <YYYY-MM-DD> --branch <name>
+       xtask mutants ratchet";
 
 pub(crate) fn cli(args: &[String]) -> ExitCode {
     match args {
@@ -61,9 +66,10 @@ pub(crate) fn cli(args: &[String]) -> ExitCode {
             compare(Path::new(first), Path::new(second))
         }
         [command, package, rest @ ..] if command == "matrix" => matrix(package, rest),
-        [command, package, dirs @ ..] if command == "matrix-merge" && !dirs.is_empty() => {
-            merge(package, dirs)
-        }
+        [command, package, dirs @ ..] if command == "matrix-merge" => matrix_merge(package, dirs),
+        [command, rest @ ..] if command == "sweep-plan" => finish(sweep_plan_command(rest)),
+        [command, rest @ ..] if command == "merge" => finish(sweep::merge_command(rest)),
+        [command] if command == "ratchet" => finish(ratchet::command()),
         [command, rest @ ..] if command == "protected" => protected(rest),
         _ => {
             eprintln!("{USAGE}");
@@ -148,9 +154,26 @@ fn shard_command(index: &str) -> Result<(), String> {
             crate::scope::short(&plan.head)
         ));
     }
-    let out = run::shard(&worktree::checkout(&repo), &repo, &plan, index)?;
+    let out = match sweep::matrix_shard(&repo, &plan, index)? {
+        Some(out) => out,
+        None => run::shard(&worktree::checkout(&repo), &repo, &plan, index)?,
+    };
     println!("wrote {}", out.display());
     Ok(())
+}
+
+fn sweep_plan_command(args: &[String]) -> Result<(), String> {
+    let (mut package, mut kind) = (None, sweep::Kind::Sweep);
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        match (flag.as_str(), rest.next()) {
+            ("--crate", Some(name)) if !name.is_empty() => package = Some(name.as_str()),
+            ("--kind", Some(value)) if value == "sweep" => kind = sweep::Kind::Sweep,
+            ("--kind", Some(value)) if value == "matrix" => kind = sweep::Kind::Matrix,
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    sweep::plan_command(package, kind)
 }
 
 fn compare(first: &Path, second: &Path) -> ExitCode {
@@ -208,9 +231,13 @@ fn matrix(package: &str, rest: &[String]) -> ExitCode {
     finish(result)
 }
 
-fn merge(package: &str, dirs: &[String]) -> ExitCode {
+fn matrix_merge(package: &str, dirs: &[String]) -> ExitCode {
     let result = crate::checks::root_of(Path::new(".")).and_then(|repo| {
-        let dirs: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+        let dirs: Vec<PathBuf> = if dirs.is_empty() {
+            matrix::shard_dirs(&repo.join("target/mutation/shards"))?
+        } else {
+            dirs.iter().map(PathBuf::from).collect()
+        };
         let merged = matrix::merge_dirs(&repo, package, &dirs)?;
         println!("{}", matrix::summary(&merged));
         Ok(())

@@ -30,6 +30,7 @@ pub(crate) struct Plan {
     pub shards: Vec<ShardPlan>,
     pub broken: Vec<Broken>,
     pub surface: Vec<String>,
+    pub matrix: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -189,7 +190,7 @@ pub(crate) fn read_plan(repo: &Path) -> Result<Plan, String> {
     serde_json::from_str(&text).map_err(|e| format!("{} is not a plan: {e}", path.display()))
 }
 
-fn test_packages(workspace: &Workspace, package: &str) -> Result<Vec<String>, String> {
+pub(crate) fn test_packages(workspace: &Workspace, package: &str) -> Result<Vec<String>, String> {
     let Scope::Packages(packages) =
         Scope::Packages(vec![package.to_owned()]).with_dependents(workspace)
     else {
@@ -241,6 +242,7 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
         shards: Vec::new(),
         broken: Vec::new(),
         surface: surface.into_iter().collect(),
+        matrix: None,
     };
     if files.is_empty() && swept.is_empty() {
         return Ok(plan);

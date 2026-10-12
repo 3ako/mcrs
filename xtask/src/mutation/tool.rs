@@ -7,6 +7,7 @@ pub(crate) const TEST_TIMEOUT_SECONDS: u32 = 360;
 const BUILD_TIMEOUT_SECONDS: u32 = 840;
 pub(crate) const MATRIX_TEST_TIMEOUT_SECONDS: u32 = 360;
 pub(crate) const MUTANTS_PER_SHARD: usize = 23;
+pub(crate) const SWEEP_MUTANT_BUDGET: usize = 2760;
 
 const SCRUBBED_PREFIXES: [&str; 2] = ["CARGO_MUTANTS_", "NEXTEST_"];
 
