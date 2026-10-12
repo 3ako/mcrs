@@ -11,6 +11,7 @@ pub enum Check {
     NoBevy,
     Wasm32,
     ExportedBuild,
+    Mutation,
 }
 
 impl Check {
@@ -27,6 +28,7 @@ impl Check {
             Check::NoBevy => "no-bevy",
             Check::Wasm32 => "wasm32",
             Check::ExportedBuild => "exported-build",
+            Check::Mutation => "mutation",
         }
     }
 
@@ -48,10 +50,11 @@ pub enum Trigger {
     Full,
     Gpu,
     Policy,
+    Mutation,
 }
 
 impl Trigger {
-    pub const ALL: [Trigger; 7] = [
+    pub const ALL: [Trigger; 8] = [
         Trigger::Edit,
         Trigger::Commit,
         Trigger::Push,
@@ -59,6 +62,7 @@ impl Trigger {
         Trigger::Full,
         Trigger::Gpu,
         Trigger::Policy,
+        Trigger::Mutation,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -70,6 +74,7 @@ impl Trigger {
             Trigger::Full => "full",
             Trigger::Gpu => "gpu",
             Trigger::Policy => "policy",
+            Trigger::Mutation => "mutation",
         }
     }
 
@@ -79,12 +84,17 @@ impl Trigger {
             Trigger::Commit => {
                 "before a commit: change size, gate configuration, mutation markers, unused dependencies, mutation configuration, formatting, clippy"
             }
-            Trigger::Push => "before a push: every check that ci runs",
+            Trigger::Push => {
+                "before a push: every check that ci runs, then the mutants in changed code"
+            }
             Trigger::Ci => "on every pull request and every push to main: all checks",
             Trigger::Full => "the whole test suite, exhaustive sweeps included",
             Trigger::Gpu => "the tests that need a Metal GPU",
             Trigger::Policy => {
                 "in CI from the default branch: the git-only checks on a pull request head read as git data"
+            }
+            Trigger::Mutation => {
+                "after the mutation shards of a pull request: the surviving mutants in changed code"
             }
         }
     }
@@ -92,8 +102,15 @@ impl Trigger {
     pub const fn is_local(self) -> bool {
         match self {
             Trigger::Edit | Trigger::Commit | Trigger::Push => true,
-            Trigger::Ci | Trigger::Full | Trigger::Gpu | Trigger::Policy => false,
+            Trigger::Ci | Trigger::Full | Trigger::Gpu | Trigger::Policy | Trigger::Mutation => {
+                false
+            }
         }
+    }
+
+    #[cfg(test)]
+    pub const fn runs_on_every_pull_request(self) -> bool {
+        matches!(self, Trigger::Ci | Trigger::Policy | Trigger::Mutation)
     }
 
     pub fn parse(name: &str) -> Option<Trigger> {
@@ -114,7 +131,21 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             Fmt,
             Clippy,
         ],
-        Trigger::Push | Trigger::Ci => &[
+        Trigger::Push => &[
+            Size,
+            GateConfig,
+            MutationMarker,
+            UnusedDeps,
+            MutationConfig,
+            Fmt,
+            Clippy,
+            Test,
+            NoBevy,
+            Wasm32,
+            ExportedBuild,
+            Mutation,
+        ],
+        Trigger::Ci => &[
             Size,
             GateConfig,
             MutationMarker,
@@ -129,6 +160,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
         ],
         Trigger::Full | Trigger::Gpu => &[Test],
         Trigger::Policy => &[Size, GateConfig, MutationMarker],
+        Trigger::Mutation => &[Mutation],
     }
 }
 
@@ -191,33 +223,56 @@ pub fn usage() -> String {
 mod tests {
     use super::*;
 
-    fn outside_ci(table: impl Fn(Trigger) -> &'static [Check]) -> Vec<(Trigger, Check)> {
+    fn outside_pull_requests(table: impl Fn(Trigger) -> &'static [Check]) -> Vec<(Trigger, Check)> {
+        let on_pull_requests: Vec<Check> = Trigger::ALL
+            .into_iter()
+            .filter(|t| t.runs_on_every_pull_request())
+            .flat_map(|t| table(t).iter().copied())
+            .collect();
         Trigger::ALL
             .into_iter()
             .filter(|t| t.is_local())
             .flat_map(|t| table(t).iter().map(move |&c| (t, c)))
-            .filter(|&(_, c)| !table(Trigger::Ci).contains(&c))
+            .filter(|(_, c)| !on_pull_requests.contains(c))
             .collect()
     }
 
     #[test]
-    fn every_local_trigger_runs_a_subset_of_ci() {
-        assert_eq!(outside_ci(checks), []);
+    fn every_local_trigger_runs_a_subset_of_the_pull_request_checks() {
+        assert_eq!(outside_pull_requests(checks), []);
         let local: Vec<_> = Trigger::ALL.into_iter().filter(|t| t.is_local()).collect();
         assert!(local.len() >= 3, "{local:?}");
+        let every: Vec<_> = Trigger::ALL
+            .into_iter()
+            .filter(|t| t.runs_on_every_pull_request())
+            .collect();
+        assert_eq!(every, [Trigger::Ci, Trigger::Policy, Trigger::Mutation]);
     }
 
     #[test]
-    fn the_subset_test_fails_on_a_check_ci_lacks_whatever_the_order() {
+    fn the_subset_test_fails_on_a_check_no_pull_request_trigger_lists_whatever_the_order() {
         fn table(trigger: Trigger) -> &'static [Check] {
             match trigger {
                 Trigger::Ci => &[Check::Test, Check::Fmt],
-                Trigger::Push => &[Check::Fmt, Check::Test],
+                Trigger::Mutation => &[Check::Mutation],
+                Trigger::Push => &[Check::Mutation, Check::Fmt, Check::Test],
                 Trigger::Commit => &[Check::Fmt, Check::Wasm32],
                 _ => &[Check::Fmt],
             }
         }
-        assert_eq!(outside_ci(table), [(Trigger::Commit, Check::Wasm32)]);
+        assert_eq!(
+            outside_pull_requests(table),
+            [(Trigger::Commit, Check::Wasm32)]
+        );
+    }
+
+    #[test]
+    fn the_mutation_check_is_the_last_of_the_push_trigger_and_alone_in_its_own() {
+        assert_eq!(checks(Trigger::Push).last(), Some(&Check::Mutation));
+        assert_eq!(checks(Trigger::Mutation), [Check::Mutation]);
+        for trigger in [Trigger::Edit, Trigger::Commit, Trigger::Ci, Trigger::Policy] {
+            assert!(!checks(trigger).contains(&Check::Mutation), "{trigger:?}");
+        }
     }
 
     #[test]

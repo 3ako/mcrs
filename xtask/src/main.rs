@@ -45,11 +45,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let base_ref = std::env::var("CHECKS_BASE_REF")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_BASE_REF.to_owned());
-    let ctx = checks::Context::new(invocation.trigger, root, base_ref, head);
+    let ctx = checks::Context::new(invocation.trigger, root, base_ref(), head);
 
     let (mut passed, mut failed) = (0, 0);
     for &check in trigger::checks(invocation.trigger) {
@@ -89,6 +85,13 @@ fn main() -> ExitCode {
     }
 }
 
+pub(crate) fn base_ref() -> String {
+    std::env::var("CHECKS_BASE_REF")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_BASE_REF.to_owned())
+}
+
 fn resolve_head(root: &Path, trigger: Trigger, requested: Option<&str>) -> Result<Head, String> {
     let rev = match (trigger, requested) {
         (Trigger::Edit | Trigger::Commit, _) => return Ok(Head::Worktree),
@@ -120,7 +123,11 @@ fn escape_data(text: &str) -> String {
         .replace('\n', "%0A")
 }
 
-fn publish(line: &str, annotation: Option<String>) {
+fn escape_property(text: &str) -> String {
+    escape_data(text).replace(':', "%3A").replace(',', "%2C")
+}
+
+fn append_summary(text: &str) {
     if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
         return;
     }
@@ -129,11 +136,18 @@ fn publish(line: &str, annotation: Option<String>) {
             .append(true)
             .create(true)
             .open(&path)
-            .and_then(|mut file| writeln!(file, "{line}\n"));
+            .and_then(|mut file| writeln!(file, "{text}\n"));
         if let Err(e) = written {
             eprintln!("could not append to the job summary: {e}");
         }
     }
+}
+
+fn publish(line: &str, annotation: Option<String>) {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
+        return;
+    }
+    append_summary(line);
     if let Some(annotation) = annotation {
         println!("{annotation}");
     }
@@ -148,6 +162,11 @@ mod tests {
         let escaped = escape_data("100% done\r\n::error title=x::forged");
         assert!(!escaped.contains(['\r', '\n']), "{escaped}");
         assert_eq!(escaped, "100%25 done%0D%0A::error title=x::forged");
+    }
+
+    #[test]
+    fn annotation_properties_also_escape_the_characters_that_delimit_them() {
+        assert_eq!(escape_property("a,b:c%\n"), "a%2Cb%3Ac%25%0A");
     }
 
     #[test]

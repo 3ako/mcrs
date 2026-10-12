@@ -1,6 +1,8 @@
 use crate::mutation::outcomes::{self, Measured};
 use crate::mutation::tool::{self, Mode, Spec};
 use crate::mutation::worktree::Tree;
+use crate::mutation::{config, plan};
+use crate::scope::Head;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct Run<'a> {
@@ -56,6 +58,7 @@ pub(crate) fn execute(tree: &Tree, config: &Path, run: &Run) -> Result<PathBuf, 
         },
         shard: run.shard,
         in_diff: run.in_diff,
+        files: &[],
     };
     let mut command = tool::command(&spec);
     command.env("CARGO_TARGET_DIR", &tree.target_dir);
@@ -76,6 +79,39 @@ pub(crate) fn execute(tree: &Tree, config: &Path, run: &Run) -> Result<PathBuf, 
             run.package
         )),
     }
+}
+
+pub(crate) fn shard(
+    tree: &Tree,
+    repo: &Path,
+    plan: &plan::Plan,
+    index: usize,
+) -> Result<PathBuf, String> {
+    let planned = plan.shards.get(index).ok_or_else(|| {
+        format!(
+            "the plan has {} shards, not {}",
+            plan.shards.len(),
+            index + 1
+        )
+    })?;
+    let unit = &plan.units[planned.unit];
+    let base_config = config::base_config(repo, &plan.base, &Head::Commit(plan.head.clone()))?;
+    let config = config::write_gate(repo, &base_config)?;
+    let patch = plan::write_patch(repo, plan)?;
+    let name = index.to_string();
+    execute(
+        tree,
+        &config,
+        &Run {
+            name: &name,
+            package: &unit.package,
+            test_packages: &unit.test_packages,
+            test_timeout_seconds: tool::TEST_TIMEOUT_SECONDS,
+            skip_baseline: plan.baseline == plan::Baseline::Skip,
+            shard: Some((planned.index, planned.count)),
+            in_diff: Some(&patch),
+        },
+    )
 }
 
 fn last_lines(path: &Path, count: usize) -> String {

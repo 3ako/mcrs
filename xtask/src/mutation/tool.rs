@@ -3,10 +3,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 pub(crate) const VERSION: &str = "27.1.0";
-#[expect(dead_code)]
 pub(crate) const TEST_TIMEOUT_SECONDS: u32 = 360;
 const BUILD_TIMEOUT_SECONDS: u32 = 840;
 pub(crate) const MATRIX_TEST_TIMEOUT_SECONDS: u32 = 360;
+pub(crate) const MUTANTS_PER_SHARD: usize = 23;
 
 const SCRUBBED_PREFIXES: [&str; 2] = ["CARGO_MUTANTS_", "NEXTEST_"];
 
@@ -43,6 +43,7 @@ pub(crate) struct Spec<'a> {
     pub mode: Mode<'a>,
     pub shard: Option<(u32, u32)>,
     pub in_diff: Option<&'a Path>,
+    pub files: &'a [String],
 }
 
 pub(crate) enum Mode<'a> {
@@ -98,6 +99,9 @@ fn command_with(spec: &Spec, environment: &[OsString]) -> Command {
     command.arg("--shard").arg(format!("{index}/{count}"));
     if let Some(diff) = spec.in_diff {
         command.arg("--in-diff").arg(diff);
+    }
+    for file in spec.files {
+        command.arg("--file").arg(file);
     }
     if let Mode::Run {
         test_packages,
@@ -199,6 +203,7 @@ mod tests {
             mode: Mode::List,
             shard: None,
             in_diff: None,
+            files: &[],
         };
         let run = Spec {
             tree: Path::new("/tree"),
@@ -212,6 +217,7 @@ mod tests {
             },
             shard: Some((2, 5)),
             in_diff: Some(Path::new("/tree/target/mutation/change.diff")),
+            files: &[],
         };
         for spec in [&list, &run] {
             let command = command_with(spec, &names);

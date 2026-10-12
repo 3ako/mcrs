@@ -120,16 +120,34 @@ fn toml_string(text: &str) -> String {
     quoted
 }
 
-fn matrix_text(config: &Config) -> String {
+fn text_with_test_args(config: &Config, test_args: &[impl std::fmt::Debug]) -> String {
     let exclusions: Vec<String> = config.exclude_re.iter().map(|p| toml_string(p)).collect();
     format!(
         "test_tool = {:?}\nprofile = {:?}\nadditional_cargo_test_args = {:?}\ngitignore = {}\nexclude_re = [{}]\n",
         config.test_tool,
         config.profile,
-        MATRIX_TEST_ARGS,
+        test_args,
         config.gitignore,
         exclusions.join(", ")
     )
+}
+
+fn matrix_text(config: &Config) -> String {
+    text_with_test_args(config, &MATRIX_TEST_ARGS)
+}
+
+fn gate_text(config: &Config) -> String {
+    text_with_test_args(config, &config.additional_cargo_test_args)
+}
+
+pub(crate) fn write_gate(repo: &Path, config: &Config) -> Result<PathBuf, String> {
+    let dir = repo.join(LISTING_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let path = dir.join("gate.toml");
+    std::fs::write(&path, gate_text(config))
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(path)
 }
 
 pub(crate) fn write_matrix(repo: &Path, config: &Config) -> Result<PathBuf, String> {
@@ -161,6 +179,7 @@ pub(crate) struct Mutant {
     pub package: String,
     pub file: String,
     pub function: Option<Function>,
+    pub span: Span,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,23 +187,59 @@ pub(crate) struct Function {
     pub function_name: String,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub(crate) struct Span {
+    pub start: Position,
+    pub end: Position,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub(crate) struct Position {
+    pub line: u32,
+}
+
 pub(crate) fn list(repo: &Path, config: &Path, package: &str) -> Result<Vec<Mutant>, String> {
+    list_with(repo, config, package, None, &[])
+}
+
+pub(crate) fn list_exit_hint(code: Option<i32>) -> &'static str {
+    match code {
+        Some(5) => {
+            " (exit 5: the diff does not match the tree, so the tree is not the commit the diff was built from)"
+        }
+        Some(6) => " (exit 6: the diff cannot be parsed)",
+        _ => "",
+    }
+}
+
+pub(crate) fn list_with(
+    tree: &Path,
+    config: &Path,
+    package: &str,
+    in_diff: Option<&Path>,
+    files: &[String],
+) -> Result<Vec<Mutant>, String> {
     let spec = Spec {
-        tree: repo,
+        tree,
         config,
         package,
         mode: Mode::List,
         shard: None,
-        in_diff: None,
+        in_diff,
+        files,
     };
     let out = tool::output(tool::command(&spec))?;
     if !out.status.success() {
         let said = String::from_utf8_lossy(&out.stderr);
         let said = said.lines().rev().find(|line| !line.trim().is_empty());
         return Err(format!(
-            "cargo mutants could not list the mutants of {package}: {}; fix the source or manifest it names",
-            said.unwrap_or("no message").trim()
+            "cargo mutants could not list the mutants of {package}: {}{}; fix the source or manifest it names",
+            said.unwrap_or("no message").trim(),
+            list_exit_hint(out.status.code())
         ));
+    }
+    if in_diff.is_some() && out.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Vec::new());
     }
     let mutants: Vec<Mutant> = serde_json::from_slice(&out.stdout).map_err(|e| {
         format!("cargo mutants printed a listing of {package} that cannot be read: {e}")

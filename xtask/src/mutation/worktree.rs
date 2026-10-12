@@ -8,12 +8,23 @@ pub(crate) struct Tree {
     pub path: PathBuf,
     pub target_dir: PathBuf,
     pub out_dir: PathBuf,
-    lock: PathBuf,
+    lock: Option<PathBuf>,
 }
 
 impl Drop for Tree {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.lock);
+        if let Some(lock) = &self.lock {
+            let _ = std::fs::remove_file(lock);
+        }
+    }
+}
+
+pub(crate) fn checkout(repo: &Path) -> Tree {
+    Tree {
+        path: repo.to_path_buf(),
+        target_dir: repo.join("target"),
+        out_dir: repo.join(BASE).join("shards"),
+        lock: None,
     }
 }
 
@@ -42,7 +53,7 @@ pub(crate) fn prepare(repo: &Path, sha: &str) -> Result<Tree, String> {
         path: base.join("tree"),
         target_dir: base.join("target"),
         out_dir: base.join("out"),
-        lock,
+        lock: Some(lock),
     };
     force_clean(repo, &tree.path, sha)?;
     Ok(tree)
