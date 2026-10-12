@@ -1,3 +1,4 @@
+use crate::floors;
 use crate::mutation::outcomes::{self, Class, Measured};
 use crate::mutation::plan::{self, Plan};
 use crate::scope;
@@ -22,10 +23,47 @@ pub(crate) struct Counts {
     pub unviable: usize,
 }
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct Sweep {
+    pub package: String,
+    pub floor: u64,
+    pub counts: Counts,
+}
+
+impl Sweep {
+    fn score(&self) -> Option<u64> {
+        outcomes::score(
+            self.counts.caught as u64,
+            self.counts.timeout as u64,
+            self.counts.missed as u64,
+        )
+    }
+
+    fn shortfall(&self) -> Option<String> {
+        let floor = floors::show(self.floor);
+        let package = &self.package;
+        let Some(score) = self.score() else {
+            return Some(format!(
+                "{package}: the sweep counted no mutant, so it cannot meet the floor {floor}; the crate needs mutants and tests that run them"
+            ));
+        };
+        (score < self.floor).then(|| {
+            format!(
+                "{package}: the sweep scores {} against the floor {floor} (caught {}, timed out {}, missed {}); if the change deleted tests, keep the ones that hold the floor, otherwise add tests that kill the surviving mutants of {package}",
+                floors::show(score),
+                self.counts.caught,
+                self.counts.timeout,
+                self.counts.missed
+            )
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Judged {
     pub counts: Counts,
     pub survivors: Vec<Survivor>,
+    pub sweeps: Vec<Sweep>,
 }
 
 static NAME: LazyLock<Regex> = LazyLock::new(|| {
@@ -104,16 +142,41 @@ pub(crate) fn judge(
     let mut judged = Judged {
         counts: Counts::default(),
         survivors: Vec::new(),
+        sweeps: Vec::new(),
     };
+    let mut sweeps: BTreeMap<usize, Sweep> = plan
+        .units
+        .iter()
+        .enumerate()
+        .filter_map(|(at, unit)| {
+            Some((
+                at,
+                Sweep {
+                    package: unit.package.clone(),
+                    floor: unit.floor?,
+                    counts: Counts::default(),
+                },
+            ))
+        })
+        .collect();
     for (index, measured) in results {
-        let package = &plan.units[plan.shards[*index].unit].package;
+        let unit = plan.shards[*index].unit;
+        let package = &plan.units[unit].package;
+        let counts = match sweeps.get_mut(&unit) {
+            Some(sweep) => &mut sweep.counts,
+            None => &mut judged.counts,
+        };
+        let diff_unit = plan.units[unit].floor.is_none();
         for mutant in measured {
             match mutant.class {
-                Class::Caught => judged.counts.caught += 1,
-                Class::Timeout => judged.counts.timeout += 1,
-                Class::Unviable => judged.counts.unviable += 1,
+                Class::Caught => counts.caught += 1,
+                Class::Timeout => counts.timeout += 1,
+                Class::Unviable => counts.unviable += 1,
                 Class::Missed => {
-                    judged.counts.missed += 1;
+                    counts.missed += 1;
+                    if !diff_unit {
+                        continue;
+                    }
                     let (file, line, change) = split_name(&mutant.name)
                         .ok_or_else(|| format!("cannot read the mutant name {}", mutant.name))?;
                     judged.survivors.push(Survivor {
@@ -126,6 +189,7 @@ pub(crate) fn judge(
             }
         }
     }
+    judged.sweeps = sweeps.into_values().collect();
     Ok(judged)
 }
 
@@ -180,6 +244,22 @@ pub(crate) fn summary(plan: &Plan, judged: &Judged) -> String {
             ));
         }
     }
+    if !judged.sweeps.is_empty() {
+        text.push_str("\n### Mutation floors\n\n| crate | floor | score | caught | timed out | missed |\n|---|---|---|---|---|---|\n");
+        for sweep in &judged.sweeps {
+            text.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                cell(&sweep.package),
+                floors::show(sweep.floor),
+                sweep
+                    .score()
+                    .map_or_else(|| "none".to_owned(), floors::show),
+                sweep.counts.caught,
+                sweep.counts.timeout,
+                sweep.counts.missed
+            ));
+        }
+    }
     if !judged.survivors.is_empty() {
         text.push_str("\n| crate | file | line | change |\n|---|---|---|---|\n");
         for survivor in &judged.survivors {
@@ -207,14 +287,17 @@ pub(crate) fn report(
     let judged = judge(plan, head, results)?;
     let total = plan.total_mutants();
     crate::append_summary(&summary(plan, &judged));
+    let mut problems: Vec<String> = judged.sweeps.iter().filter_map(Sweep::shortfall).collect();
     if !plan.in_force {
+        if !problems.is_empty() {
+            return Err(joined(problems));
+        }
         return Ok(format!(
             "not in force yet at {}; {total} mutants in changed code, {} survive",
             scope::short(&plan.base),
             judged.counts.missed
         ));
     }
-    let mut problems = Vec::new();
     if !judged.survivors.is_empty() {
         for survivor in &judged.survivors {
             println!("{}", annotation(survivor));
@@ -251,11 +334,15 @@ pub(crate) fn report(
     if !problems.is_empty() {
         return Err(problems.join("; "));
     }
+    let held = match judged.sweeps.len() {
+        0 => String::new(),
+        n => format!("; {n} swept crates at or above their floors"),
+    };
     if total == 0 {
-        return Ok("no mutant in changed code".to_owned());
+        return Ok(format!("no mutant in changed code{held}"));
     }
     Ok(format!(
-        "{total} mutants in changed code: {} caught, {} timed out, {} unviable",
+        "{total} mutants in changed code: {} caught, {} timed out, {} unviable{held}",
         judged.counts.caught, judged.counts.timeout, judged.counts.unviable
     ))
 }
@@ -315,6 +402,7 @@ mod tests {
                     package: (*package).to_owned(),
                     test_packages: vec![(*package).to_owned()],
                     names: names.iter().map(|n| (*n).to_owned()).collect(),
+                    floor: None,
                 })
                 .collect(),
             shards: shards
@@ -322,6 +410,7 @@ mod tests {
                 .map(|&(unit, index, count)| ShardPlan { unit, index, count })
                 .collect(),
             broken: Vec::new(),
+            surface: Vec::new(),
         }
     }
 
@@ -430,6 +519,154 @@ mod tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
+    fn sweep_names(count: usize) -> Vec<String> {
+        (0..count)
+            .map(|n| format!("src/a.rs:{}:5: replace f{n} -> bool with true", n + 1))
+            .collect()
+    }
+
+    fn swept(
+        floor: u64,
+        outcomes: &[(Class, usize)],
+        in_force: bool,
+        shards: u32,
+        drop_shard: Option<usize>,
+    ) -> Result<String, String> {
+        let total: usize = outcomes.iter().map(|(_, n)| n).sum();
+        let names = sweep_names(total);
+        let mut plan = plan_of(&[("low", &[])], &[]);
+        plan.in_force = in_force;
+        plan.units[0].names = names.clone();
+        plan.units[0].floor = Some(floor);
+        plan.shards = (0..shards)
+            .map(|index| ShardPlan {
+                unit: 0,
+                index,
+                count: shards,
+            })
+            .collect();
+        let mut classes = outcomes
+            .iter()
+            .flat_map(|(class, n)| std::iter::repeat_n(*class, *n));
+        let mut found: Results = (0..shards as usize).map(|i| (i, Vec::new())).collect();
+        for (n, name) in names.iter().enumerate() {
+            let class = classes.next().unwrap();
+            found
+                .get_mut(&(n % shards as usize))
+                .unwrap()
+                .push(measured(name, class));
+        }
+        if let Some(index) = drop_shard {
+            found.remove(&index);
+        }
+        report(&plan, &"a".repeat(40), &found)
+    }
+
+    #[test]
+    fn a_sweep_below_its_floor_fails() {
+        use Class::{Caught, Missed, Timeout, Unviable};
+        struct Row {
+            name: &'static str,
+            floor: u64,
+            outcomes: Vec<(Class, usize)>,
+            in_force: bool,
+            shards: u32,
+            drop_shard: Option<usize>,
+            fails_with: Vec<&'static str>,
+        }
+        let row = |name, floor, outcomes, fails_with| Row {
+            name,
+            floor,
+            outcomes,
+            in_force: true,
+            shards: 1,
+            drop_shard: None,
+            fails_with,
+        };
+        let rows = vec![
+            row(
+                "82 hundredths against a floor of 0.83",
+                83,
+                vec![(Caught, 82), (Missed, 18)],
+                vec!["low", "0.82", "0.83"],
+            ),
+            row(
+                "83 hundredths against a floor of 0.83",
+                83,
+                vec![(Caught, 83), (Missed, 17)],
+                vec![],
+            ),
+            row(
+                "a timeout counts as caught",
+                83,
+                vec![(Caught, 82), (Timeout, 1), (Missed, 17)],
+                vec![],
+            ),
+            row(
+                "an unviable mutant is not counted",
+                83,
+                vec![(Caught, 83), (Missed, 17), (Unviable, 40)],
+                vec![],
+            ),
+            row(
+                "a score above the floor with survivors",
+                83,
+                vec![(Caught, 90), (Missed, 10)],
+                vec![],
+            ),
+            row(
+                "a sweep that counted no mutant",
+                83,
+                vec![(Unviable, 3)],
+                vec!["low", "counted no mutant", "0.83"],
+            ),
+            Row {
+                in_force: false,
+                ..row(
+                    "a shortfall when the gate is not in force",
+                    83,
+                    vec![(Caught, 82), (Missed, 18)],
+                    vec!["low", "0.82", "0.83"],
+                )
+            },
+            Row {
+                shards: 2,
+                drop_shard: Some(1),
+                ..row(
+                    "an incomplete sweep",
+                    83,
+                    vec![(Caught, 100)],
+                    vec!["shard 1 is missing"],
+                )
+            },
+        ];
+        let mut wrong = Vec::new();
+        for Row {
+            name,
+            floor,
+            outcomes,
+            in_force,
+            shards,
+            drop_shard,
+            fails_with,
+        } in rows
+        {
+            let found = swept(floor, &outcomes, in_force, shards, drop_shard);
+            match (found, fails_with.is_empty()) {
+                (Ok(_), true) => {}
+                (Err(message), false) => {
+                    for part in fails_with {
+                        if !message.contains(part) {
+                            wrong.push(format!("{name}: {part} not in {message}"));
+                        }
+                    }
+                }
+                (found, _) => wrong.push(format!("{name}: unexpected {found:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
     #[test]
     fn surviving_mutant_annotations_escape_their_text() {
         let first = Survivor {
@@ -455,6 +692,7 @@ mod tests {
                 ..Counts::default()
             },
             survivors: vec![first, second],
+            sweeps: Vec::new(),
         };
         let table = summary(&plan, &judged);
         let rows: Vec<&str> = table.lines().filter(|l| l.starts_with('|')).collect();

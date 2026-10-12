@@ -6,6 +6,7 @@ pub(crate) mod matrix;
 pub(crate) mod outcomes;
 pub(crate) mod plan;
 pub(crate) mod run;
+pub(crate) mod surface;
 pub(crate) mod tool;
 pub(crate) mod verdict;
 pub(crate) mod worktree;
@@ -29,6 +30,7 @@ pub(crate) fn local(
         head,
         baseline: plan::Baseline::Run,
         shard_size: usize::MAX,
+        sweep: false,
     })?;
     if !plan.in_force {
         return Ok(format!(
@@ -94,6 +96,7 @@ fn plan_command() -> Result<(), String> {
         head: &head,
         baseline: plan::Baseline::Skip,
         shard_size: tool::MUTANTS_PER_SHARD,
+        sweep: true,
     })?;
     plan::write_plan(&repo, &plan)?;
     if !plan.in_force {
@@ -106,6 +109,14 @@ fn plan_command() -> Result<(), String> {
             unit.package,
             unit.names.len()
         );
+    }
+    if !plan.surface.is_empty() {
+        let base_report = classify::report_at(&repo, &workspace, &base)?;
+        let head_report = classify::report_at(&repo, &workspace, &head)?;
+        let text =
+            classify::changed_counts(&plan.surface, (&base, &base_report), (&head, &head_report));
+        print!("{text}");
+        crate::append_summary(&text);
     }
     for broken in &plan.broken {
         println!(
@@ -367,6 +378,7 @@ mod tests {
                     head: &head,
                     baseline: plan::Baseline::Skip,
                     shard_size: 2,
+                    sweep: false,
                 })
                 .unwrap();
                 plan::write_plan(&repo.0, &plan).unwrap();
@@ -398,6 +410,106 @@ mod tests {
                 detail.contains("survive") && detail.contains("negate"),
                 "{detail}"
             );
+        }
+
+        const LOW: &str = "pub fn double(x: i32) -> i32 {\n    x * 2\n}\n\npub fn inc(x: i32) -> i32 {\n    x + 1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn inc_adds_one() {\n        assert_eq!(inc(1), 2);\n    }\n}\n";
+        const DOUBLING: &str = "    #[test]\n    fn doubling_twice_quadruples() {\n        assert_eq!(low::double(low::double(1)), 4);\n    }\n\n";
+        const REFORMATTED: &str = "    #[test]\n    fn doubling_twice_quadruples() {\n        assert_eq!(\n            low::double(low::double(1)),\n            4\n        );\n    }\n\n";
+
+        fn high(doubling: &str) -> String {
+            format!(
+                "pub fn marker() -> bool {{\n    true\n}}\n\n#[cfg(test)]\nmod tests {{\n{doubling}    #[test]\n    fn always_true() {{\n        assert!(true);\n    }}\n}}\n"
+            )
+        }
+
+        #[test]
+        fn a_floored_crate_is_swept_when_its_tests_change() {
+            use crate::floors::tests::{measured, unmeasured};
+            let repo = Repo::new("floor-sweep");
+            repo.init();
+            repo.write(".gitignore", "/target\n");
+            repo.write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"low\", \"high\"]\nresolver = \"2\"\n\n[profile.mutants]\ninherits = \"test\"\ndebug = \"none\"\n",
+            );
+            repo.write(
+                "low/Cargo.toml",
+                "[package]\nname = \"low\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            );
+            repo.write("low/src/lib.rs", LOW);
+            repo.write(
+                "high/Cargo.toml",
+                "[package]\nname = \"high\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nlow = { path = \"../low\" }\n",
+            );
+            repo.write("high/src/lib.rs", &high(DOUBLING));
+            repo.write(".config/nextest.toml", NEXTEST);
+            repo.write(".cargo/mutants.toml", &format!("{KEYS}exclude_re = []\n"));
+            repo.write(
+                crate::floors::FLOORS_FILE,
+                &format!(
+                    "{}{}",
+                    measured("low", "1", (10, 0, 0)).text(),
+                    unmeasured("high")
+                ),
+            );
+            let status = std::process::Command::new("cargo")
+                .args(["generate-lockfile", "--offline"])
+                .current_dir(&repo.0)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            repo.commit("base");
+            let base = repo.sha();
+            let workspace = Workspace::load(&repo.0).unwrap();
+
+            let judged = |doubling: &str| {
+                repo.git(&["checkout", "--quiet", "-B", "head", &base]);
+                repo.write("high/src/lib.rs", &high(doubling));
+                repo.commit("head");
+                let head = repo.sha();
+                let plan = plan::build(&plan::Inputs {
+                    repo: &repo.0,
+                    tree: &repo.0,
+                    workspace: &workspace,
+                    base: &base,
+                    head: &head,
+                    baseline: plan::Baseline::Skip,
+                    shard_size: 100,
+                    sweep: true,
+                })
+                .unwrap();
+                plan::write_plan(&repo.0, &plan).unwrap();
+                let tree = worktree::checkout(&repo.0);
+                for index in 0..plan.shards.len() {
+                    run::shard(&tree, &repo.0, &plan, index).unwrap();
+                }
+                (plan, verdict::check(&repo.0, &head))
+            };
+
+            let (plan, found) = judged("");
+            assert_eq!(plan.surface, ["high"]);
+            let swept: Vec<_> = plan
+                .units
+                .iter()
+                .map(|unit| (unit.package.as_str(), unit.floor))
+                .collect();
+            assert_eq!(swept, [("low", Some(100))]);
+            let message = found.unwrap_err();
+            assert!(
+                message.contains("low: the sweep scores")
+                    && message.contains("against the floor 1.00"),
+                "{message}"
+            );
+
+            let (plan, found) = judged(REFORMATTED);
+            assert!(plan.surface.is_empty(), "{plan:?}");
+            assert!(
+                plan.units.iter().all(|unit| unit.floor.is_none()),
+                "{plan:?}"
+            );
+            assert!(plan.shards.is_empty(), "{plan:?}");
+            let detail = found.unwrap();
+            assert!(detail.contains("no mutant in changed code"), "{detail}");
         }
 
         #[test]

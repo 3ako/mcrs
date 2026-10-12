@@ -3,6 +3,7 @@ pub enum Check {
     Size,
     GateConfig,
     MutationMarker,
+    Floors,
     UnusedDeps,
     MutationConfig,
     Fmt,
@@ -20,6 +21,7 @@ impl Check {
             Check::Size => "size",
             Check::GateConfig => "gate-config",
             Check::MutationMarker => "mutation-marker",
+            Check::Floors => "floors",
             Check::UnusedDeps => "unused-deps",
             Check::MutationConfig => "mutation-config",
             Check::Fmt => "fmt",
@@ -36,7 +38,7 @@ impl Check {
     pub const fn is_git_only(self) -> bool {
         matches!(
             self,
-            Check::Size | Check::GateConfig | Check::MutationMarker
+            Check::Size | Check::GateConfig | Check::MutationMarker | Check::Floors
         )
     }
 }
@@ -82,7 +84,7 @@ impl Trigger {
         match self {
             Trigger::Edit => "after a file is written: change size, mutation markers, formatting",
             Trigger::Commit => {
-                "before a commit: change size, gate configuration, mutation markers, unused dependencies, mutation configuration, formatting, clippy"
+                "before a commit: change size, gate configuration, mutation markers, mutation floors, unused dependencies, mutation configuration, formatting, clippy"
             }
             Trigger::Push => {
                 "before a push: every check that ci runs, then the mutants in changed code"
@@ -126,6 +128,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             Size,
             GateConfig,
             MutationMarker,
+            Floors,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -135,6 +138,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             Size,
             GateConfig,
             MutationMarker,
+            Floors,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -149,6 +153,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             Size,
             GateConfig,
             MutationMarker,
+            Floors,
             UnusedDeps,
             MutationConfig,
             Fmt,
@@ -159,7 +164,7 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             ExportedBuild,
         ],
         Trigger::Full | Trigger::Gpu => &[Test],
-        Trigger::Policy => &[Size, GateConfig, MutationMarker],
+        Trigger::Policy => &[Size, GateConfig, MutationMarker, Floors],
         Trigger::Mutation => &[Mutation],
     }
 }
@@ -355,6 +360,21 @@ mod tests {
             let position = position.unwrap_or_else(|| panic!("{trigger:?} lacks the check"));
             assert_eq!(listed[position - 1], Check::UnusedDeps, "{trigger:?}");
             assert_eq!(listed[position + 1], Check::Fmt, "{trigger:?}");
+        }
+    }
+
+    #[test]
+    fn floors_are_judged_right_after_the_mutation_marker_wherever_a_pull_request_is() {
+        let runs_it = [Trigger::Commit, Trigger::Push, Trigger::Ci, Trigger::Policy];
+        for trigger in Trigger::ALL {
+            let listed = checks(trigger);
+            let position = listed.iter().position(|&c| c == Check::Floors);
+            if !runs_it.contains(&trigger) {
+                assert_eq!(position, None, "{trigger:?}");
+                continue;
+            }
+            let position = position.unwrap_or_else(|| panic!("{trigger:?} lacks the check"));
+            assert_eq!(listed[position - 1], Check::MutationMarker, "{trigger:?}");
         }
     }
 

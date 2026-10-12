@@ -509,6 +509,7 @@ pub(crate) fn check(
 ) -> Result<String, String> {
     tool::require_version(repo)?;
     let short = scope::short(base);
+    let floors_note = crate::floors::completeness(repo, base, head, workspace)?;
     let found = scope::configuration_at(repo, base, head, CONFIG_FILE)?;
     let head_text = scope::head_text(repo, head, CONFIG_FILE)?;
     let head_config = head_text
@@ -574,7 +575,7 @@ pub(crate) fn check(
         return Err(problems.join("\n"));
     }
     let exclusions = by_crate.values().map(Vec::len).sum::<usize>();
-    Ok(if base_config.is_none() {
+    let listing_note = if base_config.is_none() {
         format!("not in force yet at {short}; {listed} mutants listed")
     } else {
         format!(
@@ -582,6 +583,11 @@ pub(crate) fn check(
             crates.len(),
             if exclusions == 1 { "" } else { "s" }
         )
+    };
+    Ok(if floors_note.is_empty() {
+        listing_note
+    } else {
+        format!("{listing_note}; {floors_note}")
     })
 }
 
