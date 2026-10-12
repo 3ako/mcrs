@@ -1,6 +1,6 @@
 use crate::metadata::Workspace;
 use crate::mutation::attribution::TestId;
-use crate::scope::Head;
+use crate::scope::{self, Head};
 use crate::source::{self, Files, ModuleView};
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use quote::ToTokens;
@@ -940,6 +940,39 @@ pub(crate) fn workspace_report(dir: &Path, workspace: &Workspace) -> Result<Repo
     classify(&files, &target_specs(workspace), &markers, &ROWS)
 }
 
+pub(crate) fn report_at(repo: &Path, workspace: &Workspace, rev: &str) -> Result<Report, String> {
+    let head = Head::Commit(rev.to_owned());
+    let paths = source::rust_files(repo, &head)?;
+    let files = source::read_files(repo, &head, &paths)?;
+    let nextest = scope::read_at(repo, rev, ".config/nextest.toml")?
+        .ok_or_else(|| format!(".config/nextest.toml is missing at {}", scope::short(rev)))?;
+    let markers =
+        not_measured_markers(&nextest).map_err(|e| format!(".config/nextest.toml: {e}"))?;
+    let targets: Vec<TargetSpec> = target_specs(workspace)
+        .into_iter()
+        .filter(|target| files.contains_key(&target.root))
+        .collect();
+    classify(&files, &targets, &markers, &ROWS)
+}
+
+pub(crate) fn changed_counts(
+    crates: &[String],
+    base: (&str, &Report),
+    head: (&str, &Report),
+) -> String {
+    let mut text = String::from("### Protected tests of crates whose tests changed\n\n");
+    for package in crates {
+        for (label, (rev, report)) in [("base", base), ("head", head)] {
+            text.push_str(&format!(
+                "- at the {label} {}: {}\n",
+                scope::short(rev),
+                summary_line(report, package, Some(package), &ROWS)
+            ));
+        }
+    }
+    text
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Protection {
     pub protected: Vec<(TestId, String)>,
@@ -1090,6 +1123,31 @@ mod tests {
 
     fn category_of(fixture: &Fixture) -> Option<&'static str> {
         test_in(&report_of(fixture, &ROWS), fixture.test).category
+    }
+
+    #[test]
+    fn the_protected_count_is_shown_at_the_base_and_at_the_head() {
+        let plain = lib("#[test]\nfn plain() {\n    assert_eq!(1, 1);\n}\n", "plain");
+        let pinned = lib(
+            "#[test]\nfn plain() {\n    assert_eq!(1, 1);\n}\n\n#[test]\nfn pin() {\n    assert!(size_of::<A>() <= 8);\n}\n",
+            "pin",
+        );
+        let (before, after) = (report_of(&plain, &ROWS), report_of(&pinned, &ROWS));
+        let text = changed_counts(
+            &["pkg".to_owned()],
+            ("aaaaaaaaaaaaaaaa", &before),
+            ("bbbbbbbbbbbbbbbb", &after),
+        );
+        let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("- ")).collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert!(
+            lines[0].starts_with("- at the base aaaaaaaaa: pkg: 1 tests, 0 protected (size-pin 0"),
+            "{text}"
+        );
+        assert!(
+            lines[1].starts_with("- at the head bbbbbbbbb: pkg: 2 tests, 1 protected (size-pin 1"),
+            "{text}"
+        );
     }
 
     const LOWLEVEL: Target = ("lowlevel", "lowlevel", "lowlevel/src/lib.rs", true);

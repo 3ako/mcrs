@@ -107,9 +107,9 @@ pub(crate) fn shard(
             package: &unit.package,
             test_packages: &unit.test_packages,
             test_timeout_seconds: tool::TEST_TIMEOUT_SECONDS,
-            skip_baseline: plan.baseline == plan::Baseline::Skip,
+            skip_baseline: plan.baseline == plan::Baseline::Skip && unit.floor.is_none(),
             shard: Some((planned.index, planned.count)),
-            in_diff: Some(&patch),
+            in_diff: unit.floor.is_none().then_some(patch.as_path()),
         },
     )
 }

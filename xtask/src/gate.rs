@@ -1,3 +1,4 @@
+use crate::floors::{self, FLOORS_FILE};
 use crate::mutation::config::{self, CONFIG_FILE as MUTANTS_FILE};
 use crate::scope::{self, Head};
 use crate::size::{self, LIMITS_FILE};
@@ -18,16 +19,18 @@ enum Direction {
 struct Sides<'a> {
     base: Option<&'a str>,
     head: Option<&'a str>,
+    packages: Option<&'a BTreeSet<String>>,
 }
 
 type Matcher = fn(&str) -> bool;
 type Judge = fn(&Sides) -> Result<Direction, String>;
 
-const DIRECTIONS: [(Matcher, Judge); 5] = [
+const DIRECTIONS: [(Matcher, Judge); 6] = [
     (is_limits_file, limits_direction),
     (is_attributes_file, attributes_direction),
     (is_exemptions_file, exemptions_direction),
     (is_mutants_file, mutants_direction),
+    (is_floors_file, floors_direction),
     (is_quality_file, quality_direction),
 ];
 
@@ -41,6 +44,10 @@ fn is_exemptions_file(path: &str) -> bool {
 
 fn is_mutants_file(path: &str) -> bool {
     path == MUTANTS_FILE
+}
+
+fn is_floors_file(path: &str) -> bool {
+    path == FLOORS_FILE
 }
 
 fn is_attributes_file(path: &str) -> bool {
@@ -128,6 +135,28 @@ fn mutants_direction(sides: &Sides) -> Result<Direction, String> {
     })
 }
 
+fn floors_direction(sides: &Sides) -> Result<Direction, String> {
+    let Some(base) = sides.base else {
+        return Ok(Direction::Unchanged);
+    };
+    let base =
+        floors::parse(base).map_err(|e| format!("{FLOORS_FILE} at the base is malformed: {e}"))?;
+    let Some(head) = sides.head.and_then(|text| floors::parse(text).ok()) else {
+        return Ok(Direction::Loosening);
+    };
+    let packages = sides
+        .packages
+        .ok_or_else(|| format!("the packages of the head are needed to judge {FLOORS_FILE}"))?;
+    let judged = floors::judge(&base, &head, packages);
+    Ok(if !judged.problems.is_empty() {
+        Direction::Loosening
+    } else if !judged.tightened.is_empty() {
+        Direction::Tightening
+    } else {
+        Direction::Unchanged
+    })
+}
+
 fn quality_direction(sides: &Sides) -> Result<Direction, String> {
     Ok(if sides.base.is_some() {
         Direction::Loosening
@@ -174,6 +203,11 @@ pub fn check(repo: &Path, base: &str, head: &Head) -> Result<String, String> {
     let mut loosening = BTreeSet::new();
     let mut others = BTreeSet::new();
     let mut tightened = false;
+    let packages = if changed.iter().any(|path| is_floors_file(path)) {
+        Some(floors::head_packages(repo, head)?)
+    } else {
+        None
+    };
     for path in &changed {
         if let Some((_, judge)) = DIRECTIONS.iter().find(|(matches, _)| matches(path)) {
             let before = if is_limits_file(path) {
@@ -185,6 +219,7 @@ pub fn check(repo: &Path, base: &str, head: &Head) -> Result<String, String> {
             let sides = Sides {
                 base: before.as_deref(),
                 head: after.as_deref(),
+                packages: packages.as_ref(),
             };
             match judge(&sides)? {
                 Direction::Loosening => {
@@ -239,6 +274,10 @@ pub fn check(repo: &Path, base: &str, head: &Head) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::floors::{
+        FLOORS_FILE,
+        tests::{measured, unmeasured},
+    };
     use crate::scope::{resolve_base, tests::Repo};
     use crate::size::{self, LIMITS_FILE};
 
@@ -302,6 +341,14 @@ mod tests {
 
     fn crate_change() -> Edit {
         put(CRATE_FILE, "fn changed() {}\n")
+    }
+
+    fn at(name: &str, floor: &str, counts: (u64, u64, u64)) -> String {
+        measured(name, floor, counts).text()
+    }
+
+    fn floor_edits(entries: &[String]) -> Vec<Edit> {
+        vec![put(FLOORS_FILE, &entries.concat())]
     }
 
     fn manifest(version: &str) -> String {
@@ -666,6 +713,125 @@ mod tests {
                 "a deleted limits file with a crate file fails",
                 vec![del(LIMITS_FILE), crate_change()],
                 Expect::Fail(LIMITS_FILE),
+            ),
+            Row {
+                base_edits: floor_edits(&[unmeasured("mcrs")]),
+                ..row(
+                    "a floor enrolment beside a crate file passes",
+                    floor_edits(&[at("mcrs", "0.83", (83, 0, 17))])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Pass("gate configuration tightened"),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a floor raise beside a crate file passes",
+                    floor_edits(&[at("mcrs", "0.84", (84, 0, 16))])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Pass("gate configuration tightened"),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a lowered floor beside a crate file fails",
+                    floor_edits(&[at("mcrs", "0.80", (80, 0, 20))])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a lowered floor alone passes the gate configuration",
+                    floor_edits(&[at("mcrs", "0.80", (80, 0, 20))]),
+                    Expect::Pass("gate configuration loosened alone"),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a dropped provenance field beside a crate file fails",
+                    floor_edits(
+                        &[at("mcrs", "0.83", (83, 0, 17)).replace("commit = \"c1\"\n", "")],
+                    )
+                    .into_iter()
+                    .chain([crate_change()])
+                    .collect(),
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a changed provenance with the same floor beside a crate file fails",
+                    floor_edits(&[
+                        at("mcrs", "0.83", (83, 0, 17)).replace("2026-11-02", "2026-12-01")
+                    ])
+                    .into_iter()
+                    .chain([crate_change()])
+                    .collect(),
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a number turned into unmeasured beside a crate file fails",
+                    floor_edits(&[unmeasured("mcrs")])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[unmeasured("mcrs"), at("gone", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a removed numeric entry of a package gone from the head passes",
+                    floor_edits(&[unmeasured("mcrs")])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Pass("no gate change"),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[at("mcrs", "0.83", (83, 0, 17))]),
+                ..row(
+                    "a removed numeric entry of a live package beside a crate file fails",
+                    floor_edits(&[unmeasured("other")])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Fail(shipped_alone),
+                )
+            },
+            Row {
+                base_edits: floor_edits(&[unmeasured("mcrs")]),
+                ..row(
+                    "an added unmeasured entry beside a crate file passes",
+                    floor_edits(&[unmeasured("mcrs"), unmeasured("other")])
+                        .into_iter()
+                        .chain([crate_change()])
+                        .collect(),
+                    Expect::Pass("no gate change"),
+                )
+            },
+            row(
+                "a floors file absent from the base is an introduction beside a crate file",
+                floor_edits(&[at("mcrs", "0.83", (83, 0, 17))])
+                    .into_iter()
+                    .chain([crate_change()])
+                    .collect(),
+                Expect::Pass("no gate change"),
             ),
             row(
                 "a quality file absent from the base introduces a gate and may ship with other changes",

@@ -1,7 +1,7 @@
 use crate::metadata::{Kind, Workspace};
 use crate::scope::{self, Head, Scope};
 use crate::trigger::{Check, Trigger};
-use crate::{gate, marker, mutation, size, unused_deps};
+use crate::{floors, gate, marker, mutation, size, unused_deps};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -142,6 +142,7 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
         Check::Size => size::check(&ctx.root, ctx.base()?, &ctx.head),
         Check::GateConfig => gate::check(&ctx.root, ctx.base()?, &ctx.head),
         Check::MutationMarker => marker::check(&ctx.root, &ctx.head),
+        Check::Floors => floors::check(&ctx.root, ctx.base()?, &ctx.head),
         Check::UnusedDeps => {
             unused_deps::check(&ctx.root, ctx.base()?, &ctx.head, ctx.workspace()?)
         }

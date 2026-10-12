@@ -1,6 +1,7 @@
+use crate::floors::{self, Floors};
 use crate::metadata::Workspace;
 use crate::mutation::config::{self, CONFIG_FILE, Mutant};
-use crate::mutation::{diff, tool};
+use crate::mutation::{diff, surface, tool};
 use crate::scope::{self, Head, Scope};
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,7 @@ pub(crate) struct Plan {
     pub units: Vec<Unit>,
     pub shards: Vec<ShardPlan>,
     pub broken: Vec<Broken>,
+    pub surface: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -44,6 +46,7 @@ pub(crate) struct Unit {
     pub package: String,
     pub test_packages: Vec<String>,
     pub names: Vec<String>,
+    pub floor: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +59,11 @@ pub(crate) struct ShardPlan {
 
 impl Plan {
     pub(crate) fn total_mutants(&self) -> usize {
-        self.units.iter().map(|unit| unit.names.len()).sum()
+        self.units
+            .iter()
+            .filter(|unit| unit.floor.is_none())
+            .map(|unit| unit.names.len())
+            .sum()
     }
 }
 
@@ -115,6 +122,40 @@ pub(crate) struct Inputs<'a> {
     pub head: &'a str,
     pub baseline: Baseline,
     pub shard_size: usize,
+    pub sweep: bool,
+}
+
+pub(crate) fn sweeps(
+    base: Option<&Floors>,
+    head: Option<&Floors>,
+    changed: &BTreeSet<String>,
+    workspace: &Workspace,
+) -> BTreeMap<String, u64> {
+    let at_base = |name: &str| base.and_then(|floors| floors.hundredths(name));
+    let at_head = |name: &str| head.and_then(|floors| floors.hundredths(name));
+    let mut swept = BTreeMap::new();
+    let mut add = |name: &str| {
+        if let Some(floor) = at_base(name) {
+            swept.insert(name.to_owned(), floor.max(at_head(name).unwrap_or(0)));
+        }
+    };
+    for package in workspace
+        .packages
+        .iter()
+        .filter(|p| changed.contains(&p.name))
+    {
+        add(&package.name);
+        for dependency in package.dependencies.iter().filter(|d| d.local) {
+            add(&dependency.name);
+        }
+    }
+    for (name, floor) in head.into_iter().flat_map(Floors::measured) {
+        let new_or_raised = at_base(name).is_none_or(|before| floor > before);
+        if new_or_raised && workspace.packages.iter().any(|p| p.name == name) {
+            swept.insert(name.to_owned(), floor);
+        }
+    }
+    swept
 }
 
 pub(crate) fn write_patch(repo: &Path, plan: &Plan) -> Result<PathBuf, String> {
@@ -148,6 +189,15 @@ pub(crate) fn read_plan(repo: &Path) -> Result<Plan, String> {
     serde_json::from_str(&text).map_err(|e| format!("{} is not a plan: {e}", path.display()))
 }
 
+fn test_packages(workspace: &Workspace, package: &str) -> Result<Vec<String>, String> {
+    let Scope::Packages(packages) =
+        Scope::Packages(vec![package.to_owned()]).with_dependents(workspace)
+    else {
+        return Err("the test scope of a package is a list of packages".to_owned());
+    };
+    Ok(packages)
+}
+
 pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
     let Inputs {
         repo,
@@ -157,6 +207,7 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
         head,
         baseline,
         shard_size,
+        sweep,
     } = *inputs;
     let head_ref = Head::Commit(head.to_owned());
     let in_force = scope::configuration_at(repo, base, &head_ref, CONFIG_FILE)?.is_some();
@@ -167,6 +218,19 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
             files.entry(&owner.name).or_default().push(path.clone());
         }
     }
+    let (surface, swept) = if sweep {
+        let surface = surface::changed_crates(repo, workspace, base, head)?;
+        let (base_floors, head_floors) = floors::pair(repo, base, &head_ref)?;
+        let swept = sweeps(
+            base_floors.as_ref(),
+            head_floors.as_ref(),
+            &surface,
+            workspace,
+        );
+        (surface, swept)
+    } else {
+        (BTreeSet::new(), BTreeMap::new())
+    };
     let mut plan = Plan {
         base: base.to_owned(),
         head: head.to_owned(),
@@ -176,8 +240,9 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
         units: Vec::new(),
         shards: Vec::new(),
         broken: Vec::new(),
+        surface: surface.into_iter().collect(),
     };
-    if files.is_empty() {
+    if files.is_empty() && swept.is_empty() {
         return Ok(plan);
     }
     tool::require_version(repo)?;
@@ -188,11 +253,6 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
         .map_err(|e| format!("the base exclusions are not regular expressions: {e}"))?;
     let patch = write_patch(repo, &plan)?;
     for (package, changed_files) in &files {
-        let Scope::Packages(test_packages) =
-            Scope::Packages(vec![(*package).to_owned()]).with_dependents(workspace)
-        else {
-            return Err("the test scope of a package is a list of packages".to_owned());
-        };
         let listed = config::list_with(tree, &gate, package, Some(&patch), &[])?;
         let unfiltered = config::list_with(tree, &listing, package, None, changed_files)?;
         let in_diff: BTreeSet<&str> = listed.iter().map(|m| m.name.as_str()).collect();
@@ -219,8 +279,19 @@ pub(crate) fn build(inputs: &Inputs) -> Result<Plan, String> {
             }));
         plan.units.push(Unit {
             package: (*package).to_owned(),
-            test_packages,
+            test_packages: test_packages(workspace, package)?,
             names: in_diff.iter().map(|name| (*name).to_owned()).collect(),
+            floor: None,
+        });
+    }
+    for (package, floor) in &swept {
+        let listed = config::list_with(tree, &gate, package, None, &[])?;
+        let names: BTreeSet<&str> = listed.iter().map(|m| m.name.as_str()).collect();
+        plan.units.push(Unit {
+            package: package.clone(),
+            test_packages: test_packages(workspace, package)?,
+            names: names.into_iter().map(str::to_owned).collect(),
+            floor: Some(*floor),
         });
     }
     let counts: Vec<usize> = plan.units.iter().map(|unit| unit.names.len()).collect();
@@ -351,6 +422,157 @@ mod tests {
             assert!(hint.contains(part), "exit {code}: {hint}");
         }
         assert_eq!(config::list_exit_hint(Some(1)), "");
+    }
+
+    fn chain() -> Workspace {
+        let package = |name: &str, deps: &[&str]| crate::metadata::Package {
+            name: name.to_owned(),
+            dir: format!("crates/{name}"),
+            edition: "2024".to_owned(),
+            dependencies: deps
+                .iter()
+                .map(|dep| crate::metadata::Dependency {
+                    name: (*dep).to_owned(),
+                    kind: crate::metadata::Kind::Normal,
+                    local: true,
+                })
+                .collect(),
+            targets: Vec::new(),
+        };
+        Workspace {
+            packages: vec![
+                package("low", &[]),
+                package("mid", &["low"]),
+                package("high", &["mid"]),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_test_change_sweeps_the_crate_and_its_floored_dependencies() {
+        use crate::floors::tests::{measured, unmeasured};
+        let at = |name: &str, floor: &str, counts| measured(name, floor, counts).text();
+        let file = |parts: Vec<String>| floors::parse(&parts.concat()).unwrap();
+        let eighty_three = (83, 0, 17);
+        let eighty = (80, 0, 20);
+        type Row<'a> = (
+            &'a str,
+            Option<Floors>,
+            Option<Floors>,
+            &'a [&'a str],
+            Vec<(&'a str, u64)>,
+        );
+        let rows: Vec<Row> = vec![
+            (
+                "a floored crate whose tests changed",
+                Some(file(vec![at("high", "0.83", eighty_three)])),
+                Some(file(vec![at("high", "0.83", eighty_three)])),
+                &["high"],
+                vec![("high", 83)],
+            ),
+            (
+                "an unmeasured crate with a floored direct dependency",
+                Some(file(vec![
+                    at("low", "0.83", eighty_three),
+                    unmeasured("mid"),
+                ])),
+                Some(file(vec![
+                    at("low", "0.83", eighty_three),
+                    unmeasured("mid"),
+                ])),
+                &["mid"],
+                vec![("low", 83)],
+            ),
+            (
+                "a floored crate that is not a direct dependency",
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                &["high"],
+                vec![],
+            ),
+            (
+                "a floored dependent is not swept",
+                Some(file(vec![at("high", "0.83", eighty_three)])),
+                Some(file(vec![at("high", "0.83", eighty_three)])),
+                &["low"],
+                vec![],
+            ),
+            (
+                "nothing floored",
+                Some(file(vec![unmeasured("low"), unmeasured("mid")])),
+                Some(file(vec![unmeasured("low"), unmeasured("mid")])),
+                &["mid", "low"],
+                vec![],
+            ),
+            (
+                "the crate and its dependency both floored",
+                Some(file(vec![
+                    at("low", "0.80", eighty),
+                    at("mid", "0.83", eighty_three),
+                ])),
+                Some(file(vec![
+                    at("low", "0.80", eighty),
+                    at("mid", "0.83", eighty_three),
+                ])),
+                &["mid"],
+                vec![("low", 80), ("mid", 83)],
+            ),
+            (
+                "an enrolment with no test change",
+                Some(file(vec![unmeasured("mid")])),
+                Some(file(vec![at("mid", "0.83", eighty_three)])),
+                &[],
+                vec![("mid", 83)],
+            ),
+            (
+                "a raise with no test change",
+                Some(file(vec![at("low", "0.80", eighty)])),
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                &[],
+                vec![("low", 83)],
+            ),
+            (
+                "an unchanged floor with no test change",
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                &[],
+                vec![],
+            ),
+            (
+                "a lowered head floor is swept at the base floor",
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                Some(file(vec![at("low", "0.80", eighty)])),
+                &["low"],
+                vec![("low", 83)],
+            ),
+            (
+                "a floors file that is new at the head",
+                None,
+                Some(file(vec![at("low", "0.83", eighty_three)])),
+                &[],
+                vec![("low", 83)],
+            ),
+            (
+                "a floor of a package outside the workspace",
+                Some(file(vec![unmeasured("low")])),
+                Some(file(vec![at("gone", "0.83", eighty_three)])),
+                &[],
+                vec![],
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (name, base, head, changed, expected) in rows {
+            let changed: BTreeSet<String> = changed.iter().map(|c| (*c).to_owned()).collect();
+            let found = sweeps(base.as_ref(), head.as_ref(), &changed, &chain());
+            let wanted: BTreeMap<String, u64> = expected
+                .into_iter()
+                .map(|(name, floor)| (name.to_owned(), floor))
+                .collect();
+            if found != wanted {
+                wrong.push(format!("{name}: expected {wanted:?}, found {found:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

@@ -128,7 +128,6 @@ fn judge(name: &str, phases: &[PhaseResult], summary: &Summary) -> Result<Class,
     Ok(class)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn score(caught: u64, timeout: u64, missed: u64) -> Option<u64> {
     let denominator = caught + timeout + missed;
     (denominator > 0).then(|| (caught + timeout) * 100 / denominator)
