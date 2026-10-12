@@ -156,6 +156,16 @@ fn tests_without_a_loader(
     file: &syn::File,
     loader_functions: &BTreeSet<String>,
 ) -> Vec<(usize, &'static str)> {
+    loaderless_tests(file, loader_functions)
+        .into_iter()
+        .map(|line| (line, LOADS_NO_FIXTURE))
+        .collect()
+}
+
+pub(super) fn loaderless_tests(
+    file: &syn::File,
+    loader_functions: &BTreeSet<String>,
+) -> Vec<usize> {
     let mut items = Items::default();
     items.visit_file(file);
     let mut loader = items.imported.clone();
@@ -167,7 +177,7 @@ fn tests_without_a_loader(
         .tests
         .iter()
         .filter(|(_, idents)| !reaches_loader(idents, &items, &loader))
-        .map(|(line, _)| (*line, LOADS_NO_FIXTURE))
+        .map(|(line, _)| *line)
         .collect()
 }
 
@@ -292,19 +302,27 @@ impl<'ast> Visit<'ast> for PatternNames {
     }
 }
 
-fn compared(mac: &Macro) -> Option<(Expr, Expr)> {
+pub(super) fn assertion_arguments(mac: &Macro) -> Option<(Vec<Expr>, usize)> {
     let name = mac.path.segments.last()?.ident.to_string();
-    let comparing = COMPARING_MACROS.contains(&name.as_str());
-    if !comparing && !CONDITION_MACROS.contains(&name.as_str()) {
+    let operands = if COMPARING_MACROS.contains(&name.as_str()) {
+        2
+    } else if CONDITION_MACROS.contains(&name.as_str()) {
+        1
+    } else {
         return None;
-    }
-    let args: Vec<Expr> = mac
+    };
+    let args = mac
         .parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated)
         .ok()?
         .into_iter()
         .collect();
+    Some((args, operands))
+}
+
+fn compared(mac: &Macro) -> Option<(Expr, Expr)> {
+    let (args, operands) = assertion_arguments(mac)?;
     let mut args = args.into_iter();
-    if comparing {
+    if operands == 2 {
         return Some((args.next()?, args.next()?));
     }
     match args.next()? {
@@ -475,6 +493,13 @@ impl<'ast> Visit<'ast> for Operands<'_, 'ast> {
 }
 
 fn literal_expectations(file: &syn::File) -> Vec<(usize, &'static str)> {
+    literal_assertions(file)
+        .into_iter()
+        .map(|line| (line, LITERAL_EXPECTED))
+        .collect()
+}
+
+pub(super) fn literal_assertions(file: &syn::File) -> Vec<usize> {
     let mut constants = Constants::default();
     constants.visit_file(file);
     let mut operands = Operands {
@@ -483,11 +508,7 @@ fn literal_expectations(file: &syn::File) -> Vec<(usize, &'static str)> {
         found: Vec::new(),
     };
     operands.visit_file(file);
-    operands
-        .found
-        .into_iter()
-        .map(|line| (line, LITERAL_EXPECTED))
-        .collect()
+    operands.found
 }
 
 #[cfg(test)]

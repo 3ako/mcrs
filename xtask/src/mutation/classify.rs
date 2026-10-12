@@ -90,6 +90,7 @@ pub(crate) struct Facts {
 pub(crate) struct Tables {
     unsafe_fns: BTreeSet<Vec<String>>,
     pub(crate) loaders: BTreeSet<String>,
+    fixture_functions: BTreeSet<String>,
 }
 
 impl Tables {
@@ -151,6 +152,10 @@ fn corpus(facts: &Facts, tables: &Tables) -> bool {
     let s = &facts.shallow;
     s.strings.iter().any(|text| is_assets_path(text))
         || s.calls.iter().any(|name| tables.loaders.contains(name))
+        || s.resolved.iter().any(|path| {
+            matches!(path.as_slice(), [krate, function]
+                if krate == FIXTURE_LOADER_CRATE && tables.fixture_functions.contains(function))
+        })
 }
 
 pub(crate) const ROWS: [Row; 6] = [
@@ -199,6 +204,8 @@ pub(crate) struct TargetSpec {
     pub root: String,
     pub lib: bool,
 }
+
+const FIXTURE_LOADER_CRATE: &str = "mcrs_minecraft_fixtures";
 
 const LIB_KINDS: [&str; 6] = ["lib", "rlib", "proc-macro", "cdylib", "dylib", "staticlib"];
 
@@ -870,6 +877,9 @@ pub(crate) fn classify(
     for index in indexes.iter().filter(|index| index.target.lib) {
         for (at, callable) in index.callables.iter().enumerate() {
             if callable.public && index.functions.contains_key(&callable.name) {
+                if index.target.package == FIXTURE_LOADER_CRATE {
+                    tables.fixture_functions.insert(callable.name.clone());
+                }
                 let reads = index
                     .closure(at)
                     .strings
@@ -1355,6 +1365,86 @@ mod tests {
                 "{}: counterexample",
                 case.category
             );
+        }
+    }
+
+    #[test]
+    fn a_loader_call_marks_a_test_that_reads_oracle_fixtures() {
+        let loads = |body: &'static str| {
+            let mut fixture = lib(body, "reads");
+            fixture.files.push((
+                "crates/mcrs_minecraft_fixtures/src/lib.rs",
+                "pub struct Fixture;\n\npub fn fixture(name: &str) -> Fixture {\n    Fixture\n}\n",
+            ));
+            fixture.targets.push((
+                FIXTURE_LOADER_CRATE,
+                FIXTURE_LOADER_CRATE,
+                "crates/mcrs_minecraft_fixtures/src/lib.rs",
+                true,
+            ));
+            fixture
+        };
+        let positives = [
+            (
+                "a call through an imported name",
+                "use mcrs_minecraft_fixtures::fixture;\n\n#[test]\nfn reads() {\n    let dump = fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call through the full path",
+                "#[test]\nfn reads() {\n    let dump = mcrs_minecraft_fixtures::fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call through an alias of the crate",
+                "use mcrs_minecraft_fixtures as fx;\n\n#[test]\nfn reads() {\n    let dump = fx::fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call through a renamed import",
+                "use mcrs_minecraft_fixtures::fixture as load;\n\n#[test]\nfn reads() {\n    let dump = load(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call through a glob import",
+                "use mcrs_minecraft_fixtures::*;\n\n#[test]\nfn reads() {\n    let dump = fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call through a grouped import",
+                "use mcrs_minecraft_fixtures::{fixture, Fixture};\n\n#[test]\nfn reads() {\n    let dump: Fixture = fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a call in a helper of the same file",
+                "use mcrs_minecraft_fixtures::fixture;\n\nfn dump() -> Vec<u8> {\n    fixture(\"demo\").bytes()\n}\n\n#[test]\nfn reads() {\n    assert!(!dump().is_empty());\n}\n",
+            ),
+        ];
+        for (label, source) in positives {
+            assert_eq!(category_of(&loads(source)), Some("corpus"), "{label}");
+        }
+        let negatives = [
+            (
+                "the same function name from another crate",
+                "use other::fixture;\n\n#[test]\nfn reads() {\n    let dump = fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a crate whose name only starts with the loader's",
+                "use mcrs_minecraft_fixtures_extra::fixture;\n\n#[test]\nfn reads() {\n    let dump = fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a function of the same name declared in the file",
+                "fn fixture(name: &str) -> Option<u8> {\n    None\n}\n\n#[test]\nfn reads() {\n    let dump = fixture(\"demo\");\n    assert!(dump.is_some());\n}\n",
+            ),
+            (
+                "a method of the same name",
+                "#[test]\nfn reads() {\n    let dump = store.fixture(\"demo\");\n    assert!(dump.is_ok());\n}\n",
+            ),
+            (
+                "a glob import and a call to a name the loader does not export",
+                "use mcrs_minecraft_fixtures::*;\n\n#[test]\nfn reads() {\n    let value = compute();\n    assert_eq!(value, 3);\n}\n",
+            ),
+            (
+                "the crate named only in a string",
+                "#[test]\nfn reads() {\n    let note = \"mcrs_minecraft_fixtures::fixture\";\n    assert!(!note.is_empty());\n}\n",
+            ),
+        ];
+        for (label, source) in negatives {
+            assert_eq!(category_of(&loads(source)), None, "{label}");
         }
     }
 

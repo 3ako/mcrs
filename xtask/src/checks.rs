@@ -10,6 +10,10 @@ use std::process::{Command, Stdio};
 
 pub type Outcome = Result<String, String>;
 
+fn is_actions(value: Option<&str>) -> bool {
+    value == Some("true")
+}
+
 const WASM32_PACKAGES: [&str; 9] = [
     "mcrs_minecraft_protocol",
     "mcrs_minecraft_keys",
@@ -47,6 +51,7 @@ pub struct Context {
     root: PathBuf,
     base_ref: String,
     head: Head,
+    actions: bool,
     base: OnceCell<Result<String, String>>,
     workspace: OnceCell<Result<Workspace, String>>,
     changes: OnceCell<Result<Changes, String>>,
@@ -59,6 +64,7 @@ impl Context {
             root,
             base_ref,
             head,
+            actions: is_actions(std::env::var("GITHUB_ACTIONS").ok().as_deref()),
             base: OnceCell::new(),
             workspace: OnceCell::new(),
             changes: OnceCell::new(),
@@ -199,16 +205,14 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
 
 fn parity_check(ctx: &Context) -> Outcome {
     let base = ctx.base()?;
-    if matches!(ctx.trigger, Trigger::Edit | Trigger::Commit) {
-        let changed = scope::changed_paths(&ctx.root, base, &ctx.head)?;
-        return parity::check(
-            &ctx.root,
-            base,
-            &ctx.head,
-            parity::Selection::Changed(&changed),
-        );
-    }
-    parity::check(&ctx.root, base, &ctx.head, parity::Selection::Every)
+    let changed = scope::changed_paths(&ctx.root, base, &ctx.head)?;
+    let selection = if matches!(ctx.trigger, Trigger::Edit | Trigger::Commit) {
+        parity::Selection::Changed(&changed)
+    } else {
+        parity::Selection::Every
+    };
+    let annotate = ctx.actions.then_some(changed.as_slice());
+    parity::check(&ctx.root, base, &ctx.head, selection, annotate)
 }
 
 fn mutation_packages(ctx: &Context) -> Result<Vec<String>, String> {
@@ -460,6 +464,37 @@ mod tests {
         };
         ctx.workspace.set(Ok(workspace)).unwrap();
         ctx
+    }
+
+    #[test]
+    fn only_the_value_true_means_a_run_under_actions() {
+        let rows = [
+            (Some("true"), true),
+            (Some("false"), false),
+            (Some("True"), false),
+            (Some(""), false),
+            (None, false),
+        ];
+        for (value, expected) in rows {
+            assert_eq!(is_actions(value), expected, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn parity_judges_the_changed_files_locally_and_every_file_elsewhere() {
+        let claim = "#[test]\nfn vanilla_value() {\n    assert_eq!(got(), 1);\n}\n";
+        let repo = Repo::new("parity-selection");
+        repo.init();
+        repo.write("crates/x/src/old.rs", claim);
+        repo.commit("base");
+        repo.git(&["branch", "base"]);
+        repo.write("crates/x/src/new.rs", claim);
+        let detail = |trigger| run(&context(&repo, trigger), Check::Parity);
+        let one = Ok("1 files; 1 vanilla claims outside parity files".to_owned());
+        let both = Ok("2 files; 2 vanilla claims outside parity files".to_owned());
+        assert_eq!(detail(Trigger::Edit), one);
+        assert_eq!(detail(Trigger::Commit), one);
+        assert_eq!(detail(Trigger::Ci), both);
     }
 
     #[test]

@@ -1,10 +1,11 @@
+mod claims;
 mod route;
 mod rules;
 
 use crate::scope::{self, Head};
 use crate::source;
 use route::Routes;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use syn::{Item, Visibility};
 
@@ -16,9 +17,82 @@ pub enum Selection<'a> {
     Changed(&'a [String]),
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Warning {
+    path: String,
+    line: usize,
+    test: String,
+}
+
+impl Warning {
+    fn message(&self) -> String {
+        format!(
+            "{}: claims vanilla behaviour against a literal and loads no fixture",
+            self.test
+        )
+    }
+}
+
 struct Report {
     files: usize,
     violations: BTreeSet<String>,
+    warnings: BTreeSet<Warning>,
+}
+
+fn crate_of(path: &str) -> &str {
+    match path.split_once('/') {
+        Some(("crates", rest)) => rest.split_once('/').map_or("mcrs", |(name, _)| name),
+        Some(("xtask", _)) => "xtask",
+        _ => "mcrs",
+    }
+}
+
+fn counts(warnings: &BTreeSet<Warning>) -> BTreeMap<&str, usize> {
+    let mut counts = BTreeMap::new();
+    for warning in warnings {
+        *counts.entry(crate_of(&warning.path)).or_default() += 1;
+    }
+    counts
+}
+
+fn annotations(warnings: &BTreeSet<Warning>, changed: &[String]) -> Vec<String> {
+    warnings
+        .iter()
+        .filter(|warning| changed.contains(&warning.path))
+        .map(|warning| {
+            format!(
+                "::warning file={},line={}::{}",
+                crate::escape_property(&warning.path),
+                warning.line,
+                crate::escape_data(&warning.message())
+            )
+        })
+        .collect()
+}
+
+fn report_lines(report: &Report, annotate: Option<&[String]>) -> Vec<String> {
+    let mut lines: Vec<String> = report
+        .violations
+        .iter()
+        .map(|line| printable(line))
+        .collect();
+    for warning in &report.warnings {
+        lines.push(printable(&format!(
+            "parity: warning: {}:{}: {}",
+            warning.path,
+            warning.line,
+            warning.message()
+        )));
+    }
+    for (krate, count) in counts(&report.warnings) {
+        lines.push(printable(&format!(
+            "parity: {krate}: {count} vanilla claims"
+        )));
+    }
+    if let Some(changed) = annotate {
+        lines.extend(annotations(&report.warnings, changed));
+    }
+    lines
 }
 
 fn widens(path: &str) -> bool {
@@ -84,6 +158,7 @@ fn scan(repo: &Path, base: &str, head: &Head, selection: &Selection) -> Result<R
     let paths = selected(repo, head, selection)?;
     let files = source::read_files(repo, head, &paths)?;
     let mut violations = BTreeSet::new();
+    let mut warnings = BTreeSet::new();
     for (path, text) in &files {
         let parsed = match source::parse(path, text) {
             Ok(parsed) => parsed,
@@ -101,10 +176,18 @@ fn scan(repo: &Path, base: &str, head: &Head, selection: &Selection) -> Result<R
                 violations.insert(format!("{path}:{line}: {rule}"));
             }
         }
+        for claim in claims::warnings(path, &parsed, &loader_functions) {
+            warnings.insert(Warning {
+                path: path.clone(),
+                line: claim.line,
+                test: claim.test,
+            });
+        }
     }
     Ok(Report {
         files: files.len(),
         violations,
+        warnings,
     })
 }
 
@@ -117,13 +200,23 @@ fn printable(line: &str) -> String {
     }
 }
 
-pub fn check(repo: &Path, base: &str, head: &Head, selection: Selection) -> Result<String, String> {
+pub fn check(
+    repo: &Path,
+    base: &str,
+    head: &Head,
+    selection: Selection,
+    annotate: Option<&[String]>,
+) -> Result<String, String> {
     let report = scan(repo, base, head, &selection)?;
-    if report.violations.is_empty() {
-        return Ok(format!("{} files", report.files));
+    for line in report_lines(&report, annotate) {
+        println!("{line}");
     }
-    for line in &report.violations {
-        println!("{}", printable(line));
+    if report.violations.is_empty() {
+        return Ok(format!(
+            "{} files; {} vanilla claims outside parity files",
+            report.files,
+            report.warnings.len()
+        ));
     }
     Err(format!("{} violations", report.violations.len()))
 }
@@ -437,7 +530,7 @@ mod tests {
     }
 
     fn check_message(repo: &Repo, base: &str) -> Result<String, String> {
-        check(&repo.0, base, &Head::Worktree, Selection::Every)
+        check(&repo.0, base, &Head::Worktree, Selection::Every, None)
     }
 
     #[test]
@@ -474,7 +567,10 @@ mod tests {
         let (repo, base) = with_base(&[]);
         repo.write("crates/demo/src/a.rs", "fn a() {}\n");
         repo.write("crates/demo/src/b.rs", "fn b() {}\n");
-        assert_eq!(check_message(&repo, &base), Ok("2 files".to_owned()));
+        assert_eq!(
+            check_message(&repo, &base),
+            Ok("2 files; 0 vanilla claims outside parity files".to_owned())
+        );
     }
 
     #[test]
@@ -521,5 +617,149 @@ mod tests {
             message.starts_with(&format!("{LOADER_SOURCE}:1: does not parse: ")),
             "{message}"
         );
+    }
+
+    const CLAIM: &str = "#[test]\nfn vanilla_value() {\n    assert_eq!(got(), 1);\n}\n";
+
+    #[test]
+    fn warnings_are_counted_per_crate() {
+        let rows = [
+            ("crates/a/src/x.rs", "a"),
+            ("crates/b/tests/it/y.rs", "b"),
+            ("crates/a_b/src/lib.rs", "a_b"),
+            ("xtask/src/z.rs", "xtask"),
+            ("src/m.rs", "mcrs"),
+            ("build.rs", "mcrs"),
+            ("crates/loose.rs", "mcrs"),
+            ("xtasks/y.rs", "mcrs"),
+            ("tools/crates/a/x.rs", "mcrs"),
+        ];
+        for (path, krate) in rows {
+            assert_eq!(crate_of(path), krate, "{path}");
+        }
+
+        let (repo, base) = with_base(&[]);
+        for path in [
+            "crates/a/src/one.rs",
+            "crates/b/src/one.rs",
+            "crates/b/tests/it/two.rs",
+            "xtask/src/one.rs",
+            "src/one.rs",
+        ] {
+            repo.write(path, CLAIM);
+        }
+        repo.write("crates/c/src/silent.rs", "fn quiet() {}\n");
+        let report = scanned(&repo, &base).unwrap();
+        assert_eq!(
+            counts(&report.warnings),
+            BTreeMap::from([("a", 1), ("b", 2), ("mcrs", 1), ("xtask", 1)])
+        );
+        assert_eq!(
+            report_lines(&report, None),
+            [
+                "parity: warning: crates/a/src/one.rs:2: vanilla_value: claims vanilla behaviour against a literal and loads no fixture",
+                "parity: warning: crates/b/src/one.rs:2: vanilla_value: claims vanilla behaviour against a literal and loads no fixture",
+                "parity: warning: crates/b/tests/it/two.rs:2: vanilla_value: claims vanilla behaviour against a literal and loads no fixture",
+                "parity: warning: src/one.rs:2: vanilla_value: claims vanilla behaviour against a literal and loads no fixture",
+                "parity: warning: xtask/src/one.rs:2: vanilla_value: claims vanilla behaviour against a literal and loads no fixture",
+                "parity: a: 1 vanilla claims",
+                "parity: b: 2 vanilla claims",
+                "parity: mcrs: 1 vanilla claims",
+                "parity: xtask: 1 vanilla claims",
+            ]
+        );
+        assert_eq!(
+            check_message(&repo, &base),
+            Ok("6 files; 5 vanilla claims outside parity files".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_claim_never_turns_into_a_violation() {
+        let (repo, base) = with_base(&[]);
+        repo.write("crates/a/src/one.rs", CLAIM);
+        let report = scanned(&repo, &base).unwrap();
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        assert_eq!(report.warnings.len(), 1);
+
+        repo.write("crates/a/src/route.rs", "fn broken( {\n");
+        let lines = report_lines(&scanned(&repo, &base).unwrap(), None);
+        assert!(lines[0].contains("does not parse"), "{lines:?}");
+        assert!(lines[1].starts_with("parity: warning: "), "{lines:?}");
+        assert_eq!(check_message(&repo, &base), Err("1 violations".to_owned()));
+    }
+
+    #[test]
+    fn warnings_in_changed_files_become_annotations() {
+        let one = Warning {
+            path: "crates/a/src/one.rs".to_owned(),
+            line: 3,
+            test: "first".to_owned(),
+        };
+        let two = Warning {
+            path: "crates/b/tests/it/two,odd:%.rs".to_owned(),
+            line: 9,
+            test: "second".to_owned(),
+        };
+        let multiline = Warning {
+            path: "crates/c/line\r\nbreak.rs".to_owned(),
+            line: 1,
+            test: "third".to_owned(),
+        };
+        let warnings: BTreeSet<Warning> = [one, two, multiline].into();
+        let only = |paths: &[&str]| {
+            let changed: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
+            annotations(&warnings, &changed)
+        };
+        assert_eq!(
+            only(&["crates/b/tests/it/two,odd:%.rs"]),
+            [
+                "::warning file=crates/b/tests/it/two%2Codd%3A%25.rs,line=9::second: claims vanilla behaviour against a literal and loads no fixture"
+            ]
+        );
+        assert_eq!(
+            only(&["crates/c/line\r\nbreak.rs"]),
+            [
+                "::warning file=crates/c/line%0D%0Abreak.rs,line=1::third: claims vanilla behaviour against a literal and loads no fixture"
+            ]
+        );
+        assert_eq!(
+            only(&["crates/a/src/one.rs", "README.md"]),
+            [
+                "::warning file=crates/a/src/one.rs,line=3::first: claims vanilla behaviour against a literal and loads no fixture"
+            ]
+        );
+        assert_eq!(only(&["crates/a/src/other.rs"]), Vec::<String>::new());
+        assert_eq!(only(&[]), Vec::<String>::new());
+        assert_eq!(
+            only(&["crates/a/src/one.rs", "crates/b/tests/it/two,odd:%.rs"]).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn annotations_follow_the_counts_and_only_when_asked_for() {
+        let (repo, base) = with_base(&[]);
+        repo.write("crates/a/src/one.rs", CLAIM);
+        repo.write("crates/a/src/two.rs", CLAIM);
+        let report = scanned(&repo, &base).unwrap();
+        let changed = ["crates/a/src/two.rs".to_owned()];
+
+        let plain = report_lines(&report, None);
+        assert_eq!(plain.len(), 3, "{plain:?}");
+        assert!(
+            plain.iter().all(|line| !line.starts_with("::")),
+            "{plain:?}"
+        );
+
+        let annotated = report_lines(&report, Some(&changed));
+        assert_eq!(annotated[..3], plain[..]);
+        assert_eq!(
+            annotated[3..],
+            [
+                "::warning file=crates/a/src/two.rs,line=2::vanilla_value: claims vanilla behaviour against a literal and loads no fixture"
+            ]
+        );
+        assert_eq!(report_lines(&report, Some(&[])), plain);
     }
 }
