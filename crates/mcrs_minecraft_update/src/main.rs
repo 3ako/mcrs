@@ -66,8 +66,14 @@ struct Options {
     diff_out: Option<PathBuf>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Recapture {
+    All,
+    One(String),
+}
+
 enum Invocation {
-    Recapture(Vec<String>),
+    Recapture(Recapture),
     Names,
     Keys,
     Update(Options),
@@ -89,21 +95,32 @@ fn main() {
 
 fn command(args: Vec<String>) -> Option<Invocation> {
     match args.first().map(String::as_str) {
-        Some("recapture") => Some(Invocation::Recapture(args[1..].to_vec())),
+        Some("recapture") => recapture_target(&args[1..]).map(Invocation::Recapture),
         Some("names") => (args.len() == 1).then_some(Invocation::Names),
         Some("keys") => (args.len() == 1).then_some(Invocation::Keys),
         _ => parse(args.into_iter()).map(Invocation::Update),
     }
 }
 
-fn recapture(args: &[String]) -> Result<(), String> {
-    let root = workspace_root();
+fn recapture_target(args: &[String]) -> Option<Recapture> {
     match args {
-        [all] if all == "--all" => {
-            let failed: Vec<&str> = fixtures::FIXTURES
+        [all] if all == "--all" => Some(Recapture::All),
+        [name] if !name.starts_with('-') => Some(Recapture::One(name.clone())),
+        _ => None,
+    }
+}
+
+fn recapture(target: &Recapture) -> Result<(), String> {
+    recapture_in(&workspace_root(), target)
+}
+
+fn recapture_in(root: &Path, target: &Recapture) -> Result<(), String> {
+    match target {
+        Recapture::All => {
+            let failed: Vec<&str> = mcrs_minecraft_fixtures::table()
                 .iter()
-                .filter(|fixture| !recapture_one(&root, fixture))
-                .map(|fixture| fixture.name)
+                .filter(|fixture| !recapture_one(root, fixture))
+                .map(|fixture| fixture.name.as_str())
                 .collect();
             if failed.is_empty() {
                 Ok(())
@@ -111,15 +128,15 @@ fn recapture(args: &[String]) -> Result<(), String> {
                 Err(format!("recapture failed for {}", failed.join(", ")))
             }
         }
-        [name] if !name.starts_with('-') => {
-            let fixture = fixtures::lookup(name)?;
-            if recapture_one(&root, fixture) {
+        Recapture::One(name) => {
+            let fixture =
+                mcrs_minecraft_fixtures::entry(name).map_err(|error| error.to_string())?;
+            if recapture_one(root, fixture) {
                 Ok(())
             } else {
                 Err(format!("recapture failed for {name}"))
             }
         }
-        _ => usage(),
     }
 }
 
@@ -135,7 +152,7 @@ fn names_report() -> Result<(), String> {
     write_names(&root, &jar, None)
 }
 
-fn recapture_one(root: &Path, fixture: &fixtures::Fixture) -> bool {
+fn recapture_one(root: &Path, fixture: &mcrs_minecraft_fixtures::Entry) -> bool {
     match fixtures::recapture(root, fixture) {
         Ok(copied) => {
             let paths: Vec<String> = copied
@@ -372,7 +389,9 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Invocation, command};
+    use super::Invocation;
+    use super::{Recapture, command, recapture, recapture_in, recapture_target};
+    use crate::testing::scratch;
 
     #[test]
     fn a_subcommand_takes_no_stray_arguments() {
@@ -391,6 +410,203 @@ mod tests {
             );
             assert!(!matches!(parsed, Some(Invocation::Update(_))), "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_recapture_names_one_fixture_or_all_and_nothing_else() {
+        for (args, expected) in [
+            (&["--all"][..], Some(Recapture::All)),
+            (&["beard"], Some(Recapture::One("beard".to_owned()))),
+            (&["-x"], None),
+            (&["--other"], None),
+            (&[], None),
+            (&["beard", "surface"], None),
+            (&["--all", "beard"], None),
+        ] {
+            let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+            let target = recapture_target(&args);
+            assert_eq!(target, expected, "{args:?}");
+            let invoked = command(
+                ["recapture".to_owned()]
+                    .into_iter()
+                    .chain(args.clone())
+                    .collect(),
+            );
+            let parsed = match invoked {
+                Some(Invocation::Recapture(parsed)) => Some(parsed),
+                _ => None,
+            };
+            assert_eq!(parsed, target, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_fixture_name_is_refused_before_any_task_runs() {
+        let error = recapture(&Recapture::One("no_such_fixture".to_owned())).unwrap_err();
+        assert!(error.starts_with("unknown fixture no_such_fixture; known fixtures: density, "));
+    }
+
+    #[cfg(unix)]
+    fn oracle_root(script: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = scratch("recapture");
+        let project = root.join(crate::fixtures::ORACLE);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(root.join("assets/minecraft")).unwrap();
+        std::fs::write(
+            root.join("assets/minecraft/version.json"),
+            mcrs_minecraft_core::VERSION_JSON,
+        )
+        .unwrap();
+        for output in mcrs_minecraft_fixtures::table()
+            .iter()
+            .flat_map(|fixture| &fixture.outputs)
+        {
+            std::fs::create_dir_all(root.join(&output.to)).unwrap();
+        }
+        let gradlew = project.join("gradlew");
+        std::fs::write(&gradlew, script).unwrap();
+        std::fs::set_permissions(&gradlew, std::fs::Permissions::from_mode(0o755)).unwrap();
+        root
+    }
+
+    #[cfg(unix)]
+    const ONLY_BEARD_SUCCEEDS: &str = r#"#!/bin/sh
+echo "$1" >> "$(dirname "$0")/calls.log"
+for argument in "$@"; do
+    case "$argument" in
+        -PoracleOut=*) out="${argument#-PoracleOut=}" ;;
+    esac
+done
+[ "$1" = dumpBeard ] || exit 1
+printf MC > "$out/beard.bin"
+"#;
+
+    #[cfg(unix)]
+    fn calls(root: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(root.join(crate::fixtures::ORACLE).join("calls.log"))
+            .map(|log| log.lines().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recapturing_one_fixture_runs_its_task_stores_its_files_and_records_the_corpus_id() {
+        let root = oracle_root(ONLY_BEARD_SUCCEEDS);
+        recapture_in(&root, &Recapture::One("beard".to_owned())).unwrap();
+        assert_eq!(calls(&root), ["dumpBeard"]);
+        assert_eq!(
+            std::fs::read(
+                root.join("crates/mcrs_minecraft_worldgen/tests/fixtures/vanilla/beard.bin")
+            )
+            .unwrap(),
+            b"MC"
+        );
+        let manifest =
+            std::fs::read_to_string(root.join(mcrs_minecraft_fixtures::MANIFEST)).unwrap();
+        assert_eq!(
+            manifest,
+            format!(
+                "{{\n  \"beard\": \"{}\"\n}}\n",
+                mcrs_minecraft_core::VERSION.id
+            )
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_task_fails_the_recapture_of_that_fixture() {
+        let root = oracle_root(ONLY_BEARD_SUCCEEDS);
+        let error = recapture_in(&root, &Recapture::One("surface".to_owned())).unwrap_err();
+        assert_eq!(error, "recapture failed for surface");
+        assert_eq!(calls(&root), ["dumpSurface"]);
+        assert!(!root.join(mcrs_minecraft_fixtures::MANIFEST).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unknown_fixture_runs_no_task_and_lists_the_known_names() {
+        let root = oracle_root(ONLY_BEARD_SUCCEEDS);
+        let error = recapture_in(&root, &Recapture::One("no_such_fixture".to_owned())).unwrap_err();
+        assert!(
+            error
+                .starts_with("unknown fixture no_such_fixture; known fixtures: density, surface, ")
+        );
+        assert!(error.ends_with(", registry_values"), "{error}");
+        assert!(calls(&root).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recapturing_all_goes_on_after_a_failure_and_names_every_fixture_that_failed() {
+        let root = oracle_root(ONLY_BEARD_SUCCEEDS);
+        let error = recapture_in(&root, &Recapture::All).unwrap_err();
+        let table = mcrs_minecraft_fixtures::table();
+        let tasks: Vec<&str> = table.iter().map(|fixture| fixture.task.as_str()).collect();
+        assert_eq!(calls(&root), tasks);
+        let failed: Vec<&str> = table
+            .iter()
+            .filter(|fixture| fixture.name != "beard")
+            .map(|fixture| fixture.name.as_str())
+            .collect();
+        assert_eq!(error, format!("recapture failed for {}", failed.join(", ")));
+        assert!(
+            root.join("crates/mcrs_minecraft_worldgen/tests/fixtures/vanilla/beard.bin")
+                .is_file()
+        );
+    }
+
+    #[cfg(unix)]
+    fn every_task_succeeds_script() -> String {
+        let mut script = String::from(
+            "#!/bin/sh\necho \"$1\" >> \"$(dirname \"$0\")/calls.log\"\nkey=\"$1\"\nfor argument in \"$@\"; do\n    case \"$argument\" in\n        -PoracleOut=*) out=\"${argument#-PoracleOut=}\" ;;\n        -PgoldenOut=*) out=\"${argument#-PgoldenOut=}\" ;;\n        -Pgolden=*) key=\"${argument#-Pgolden=}\" ;;\n    esac\ndone\ncase \"$key\" in\n",
+        );
+        for fixture in mcrs_minecraft_fixtures::table() {
+            let key = if fixture.is_golden() {
+                &fixture.name
+            } else {
+                &fixture.task
+            };
+            script.push_str(&format!("{key}) "));
+            for output in &fixture.outputs {
+                let file = match &output.files {
+                    mcrs_minecraft_fixtures::Files::Named(name) => name.clone(),
+                    mcrs_minecraft_fixtures::Files::Matching(pattern) => pattern.replace('*', "0"),
+                };
+                script.push_str(&format!("printf x > \"$out/{file}\"; "));
+            }
+            script.push_str(";;\n");
+        }
+        script.push_str("*) exit 1 ;;\nesac\n");
+        script
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recapturing_all_succeeds_when_every_task_does_and_records_every_fixture() {
+        let root = oracle_root(&every_task_succeeds_script());
+        recapture_in(&root, &Recapture::All).unwrap();
+        let table = mcrs_minecraft_fixtures::table();
+        assert_eq!(calls(&root).len(), table.len());
+        let manifest =
+            std::fs::read_to_string(root.join(mcrs_minecraft_fixtures::MANIFEST)).unwrap();
+        let recorded: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(&manifest).unwrap();
+        let names: std::collections::BTreeSet<&str> =
+            table.iter().map(|fixture| fixture.name.as_str()).collect();
+        assert_eq!(
+            recorded
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>(),
+            names
+        );
+        assert!(
+            recorded
+                .values()
+                .all(|id| *id == mcrs_minecraft_core::VERSION.id)
+        );
     }
 
     #[test]
