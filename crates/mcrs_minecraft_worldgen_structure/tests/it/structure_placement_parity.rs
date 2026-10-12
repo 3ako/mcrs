@@ -4,11 +4,11 @@
 use bytes::Buf;
 use mcrs_minecraft_core::ColumnPos;
 use mcrs_minecraft_core::ResourceLocation;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_worldgen_structure::StructureSet;
 use mcrs_minecraft_worldgen_structure::placement::{SpreadPlacement, frequency_gate};
-use mcrs_minecraft_worldgen_testing::{self as corpus, dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::{self as corpus, dump_string};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 const MAGIC: &[u8; 8] = b"MCPLACE0";
 
@@ -36,9 +36,8 @@ struct DumpSeed {
 }
 
 fn read_dump() -> Vec<DumpSeed> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/vanilla/structure_cells.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("structure_placement").file("structure_cells.bin");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let seeds = (0..r.get_u32_le())
         .map(|_| DumpSeed {
             seed: r.get_i64_le(),
@@ -76,7 +75,7 @@ fn read_dump() -> Vec<DumpSeed> {
                 .collect(),
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     seeds
 }
 

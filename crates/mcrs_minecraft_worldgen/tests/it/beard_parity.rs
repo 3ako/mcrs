@@ -5,11 +5,11 @@
 use bevy_math::IVec3;
 use bytes::{Buf, Bytes};
 use mcrs_minecraft_core::{BlockPos, BoundingBox};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_worldgen::beard::{Beard, JunctionPoint, KERNEL, KERNEL_LEN, Rigid};
 use mcrs_minecraft_worldgen_noise::SampleGrid;
 use mcrs_minecraft_worldgen_structure::TerrainAdaptation;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
-use std::path::PathBuf;
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 const MAGIC: &[u8; 8] = b"MCBEARD0";
 
@@ -42,8 +42,8 @@ fn adaptation(tag: u8) -> TerrainAdaptation {
 }
 
 fn read_dump() -> (Vec<f32>, Vec<Case>) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vanilla/beard.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("beard");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
 
     let kernel_len = r.get_u32_le() as usize;
     let dumped_kernel = (0..kernel_len).map(|_| r.get_f32_le()).collect();
@@ -103,7 +103,7 @@ fn read_dump() -> (Vec<f32>, Vec<Case>) {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     (dumped_kernel, cases)
 }
 

@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Cursor;
-use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use bevy_math::IVec3;
@@ -12,6 +11,7 @@ use mcrs_minecraft_chunk::{Blocks, BoxVolume, Volume, VoxelId};
 use mcrs_minecraft_core::{BlockPos, BoundingBox};
 use mcrs_minecraft_core::{Mirror, Rotation};
 use mcrs_minecraft_core::{ResourceLocation, rl};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::compound::NbtCompound;
 use mcrs_minecraft_nbt::deserializer::NbtReadHelper;
 use mcrs_minecraft_nbt::tag::NbtTag;
@@ -32,7 +32,7 @@ use mcrs_minecraft_worldgen_feature_place::block_entity::GeneratedBlockEntity;
 use mcrs_minecraft_worldgen_feature_place::template::{
     ChainKind, Placement, SettingsRandom, compile_chain, mirror_state, place_template, rotate_state,
 };
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 use super::structures::frozen_shared;
 use super::template_manifest::{freeze, parse_state, resolve};
@@ -96,9 +96,8 @@ struct Dump {
 }
 
 fn read_dump() -> Dump {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/template_placement.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("template_placement");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let vec3 = |r: &mut bytes::Bytes| [r.get_i32_le(), r.get_i32_le(), r.get_i32_le()];
     let types = (0..r.get_u32_le()).map(|_| dump_string(&mut r)).collect();
     let blocks = (0..r.get_u32_le())
@@ -190,7 +189,7 @@ fn read_dump() -> Dump {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     Dump {
         types,
         blocks,

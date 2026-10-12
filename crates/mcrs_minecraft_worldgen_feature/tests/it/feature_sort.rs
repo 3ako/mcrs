@@ -3,12 +3,12 @@
 
 use bytes::Buf;
 use mcrs_minecraft_core::ResourceLocation;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_worldgen_feature::compile::{LoadedFeatures, build_feature_steps};
 use mcrs_minecraft_worldgen_feature::proto::FeatureStepList;
 use mcrs_minecraft_worldgen_testing as corpus;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 const MAGIC: &[u8; 8] = b"MCFSTEP0";
 
@@ -21,9 +21,8 @@ struct Source {
 }
 
 fn read_dump() -> Vec<Source> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vanilla/feature_steps.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("feature_steps");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
 
     let sources = (0..r.get_u32_le())
         .map(|_| {
@@ -58,7 +57,7 @@ fn read_dump() -> Vec<Source> {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     sources
 }
 

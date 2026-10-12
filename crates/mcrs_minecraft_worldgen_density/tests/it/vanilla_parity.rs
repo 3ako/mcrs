@@ -1,6 +1,7 @@
 use bevy_math::IVec3;
 use mcrs_minecraft_chunk::VoxelId;
-use mcrs_minecraft_core::{ResourceLocation, VERSION, rl};
+use mcrs_minecraft_core::{ResourceLocation, rl};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_worldgen_density::compile::build_router;
 use mcrs_minecraft_worldgen_density::program::Workspace;
 use mcrs_minecraft_worldgen_density::proto::DensityFunctionHolder;
@@ -12,7 +13,6 @@ use mcrs_minecraft_worldgen_noise::sample_grid::SampleGrid;
 use mcrs_minecraft_worldgen_testing as corpus;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 8] = b"MCDFORCL";
 /// The strict profile is the oracle and must reproduce the dumps bit for bit.
@@ -67,22 +67,8 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn read_dump(path: &Path) -> Dump {
-    let data = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
-    let mut r = Reader {
-        data: &data,
-        pos: 0,
-    };
-    assert_eq!(r.take(8), MAGIC, "{} is not an oracle dump", path.display());
-    assert_eq!(r.u32(), 1, "unsupported oracle format version");
-    let found = r.u32();
-    let expected = u32::try_from(VERSION.world_version).expect("the world version is negative");
-    assert_eq!(
-        found,
-        expected,
-        "{}: dumped at world version {found}, the corpus is at {expected}",
-        path.display()
-    );
+fn read_dump(name: &str, data: &[u8]) -> Dump {
+    let mut r = Reader { data, pos: 0 };
     let _settings_id = r.string();
     let seed = r.i64();
     let _chunk_x = r.i32();
@@ -105,12 +91,8 @@ fn read_dump(path: &Path) -> Dump {
             }
         })
         .collect();
-    assert_eq!(r.pos, data.len(), "trailing bytes in {}", path.display());
+    assert_eq!(r.pos, data.len(), "trailing bytes in {name}");
     Dump { seed, volumes }
-}
-
-fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vanilla")
 }
 
 fn overworld_router(seed: u64) -> NoiseRouter {
@@ -160,21 +142,18 @@ mod exhaustive {
     /// Every root the compiler supports, over all fifteen lattice dumps.
     #[test]
     fn supported_roots_match_the_vanilla_oracle() {
-        let mut dumps: Vec<PathBuf> = std::fs::read_dir(fixtures_dir())
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| std::fs::read(p).is_ok_and(|bytes| bytes.starts_with(MAGIC)))
-            .filter(|p| !p.to_string_lossy().contains("dense"))
+        let dumps: Vec<_> = fixture("density")
+            .files()
+            .into_iter()
+            .filter(|file| !file.name().contains("dense"))
             .collect();
-        dumps.sort();
         assert_eq!(dumps.len(), 15, "expected the fifteen lattice dumps");
 
         let mut report: BTreeMap<String, Diff> = BTreeMap::new();
         let mut seen_names: Vec<String> = Vec::new();
 
-        for path in &dumps {
-            let dump = read_dump(path);
+        for file in &dumps {
+            let dump = read_dump(file.name(), &file.dump(MAGIC));
             let router = overworld_router(dump.seed as u64);
 
             for v in &dump.volumes {
@@ -238,8 +217,8 @@ mod exhaustive {
     /// be distinguished.
     #[test]
     fn final_density_matches_the_dense_oracle() {
-        let path = fixtures_dir().join("overworld_s42_c0_0_dense.bin");
-        let dump = read_dump(&path);
+        let file = fixture("density").file("overworld_s42_c0_0_dense.bin");
+        let dump = read_dump(file.name(), &file.dump(MAGIC));
         let router = overworld_router(dump.seed as u64);
 
         let v = dump
