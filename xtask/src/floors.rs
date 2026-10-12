@@ -136,7 +136,7 @@ pub(crate) fn show(hundredths: u64) -> String {
     format!("{}.{:02}", hundredths / 100, hundredths % 100)
 }
 
-fn is_date(text: &str) -> bool {
+pub(crate) fn is_date(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 10
         && bytes.iter().enumerate().all(|(index, byte)| match index {
@@ -338,6 +338,117 @@ pub(crate) fn judge(base: &Floors, head: &Floors, packages: &BTreeSet<String>) -
         problems,
         tightened,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Measurement {
+    pub(crate) package: String,
+    pub(crate) cargo_mutants: String,
+    pub(crate) nextest: String,
+    pub(crate) toolchain: String,
+    pub(crate) measured: String,
+    pub(crate) commit: String,
+    pub(crate) caught: u64,
+    pub(crate) missed: u64,
+    pub(crate) timeout: u64,
+    pub(crate) unviable: u64,
+}
+
+impl Measurement {
+    pub(crate) fn hundredths(&self) -> Option<u64> {
+        outcomes::score(self.caught, self.timeout, self.missed)
+    }
+}
+
+impl Measurement {
+    fn table(&self, hundredths: u64) -> Result<String, String> {
+        let quoted = |value: &str| {
+            serde_json::to_string(value).map_err(|e| format!("{}: {e}", self.package))
+        };
+        Ok(format!(
+            "[crate.{}]\nfloor = {}\nscope = {}\ncargo_mutants = {}\nnextest = {}\ntoolchain = {}\nmeasured = {}\ncommit = {}\ncaught = {}\nmissed = {}\ntimeout = {}\nunviable = {}\n",
+            self.package,
+            show(hundredths),
+            quoted(FLOOR_SCOPE)?,
+            quoted(&self.cargo_mutants)?,
+            quoted(&self.nextest)?,
+            quoted(&self.toolchain)?,
+            quoted(&self.measured)?,
+            quoted(&self.commit)?,
+            self.caught,
+            self.missed,
+            self.timeout,
+            self.unviable
+        ))
+    }
+}
+
+pub(crate) fn raise(text: &str, measurements: &[Measurement]) -> Result<String, String> {
+    let before = parse(text)?;
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(str::to_owned).collect();
+    let mut raised = BTreeSet::new();
+    for measurement in measurements {
+        let name = &measurement.package;
+        let Some(hundredths) = measurement.hundredths() else {
+            return Err(format!("{name}: no mutant was counted, so it has no score"));
+        };
+        let Some(old) = before.hundredths(name) else {
+            return Err(format!(
+                "{name}: the floor is unmeasured or has no table in {FLOORS_FILE}, and a raise never enrols a crate"
+            ));
+        };
+        if hundredths <= old {
+            return Err(format!(
+                "{name}: the score {} does not exceed the floor {}",
+                show(hundredths),
+                show(old)
+            ));
+        }
+        if !raised.insert(name.clone()) {
+            return Err(format!("{name}: raised twice"));
+        }
+        let header = format!("[crate.{name}]");
+        let Some(start) = lines.iter().position(|line| line.trim_end() == header) else {
+            return Err(format!("{name}: {FLOORS_FILE} has no {header} table"));
+        };
+        let end = lines[start + 1..]
+            .iter()
+            .position(|line| line.starts_with('['))
+            .map_or(lines.len(), |offset| start + 1 + offset);
+        let blank_after = lines[start..end]
+            .iter()
+            .rev()
+            .take_while(|line| line.trim().is_empty())
+            .count();
+        let mut table: Vec<String> = measurement
+            .table(hundredths)?
+            .split_inclusive('\n')
+            .map(str::to_owned)
+            .collect();
+        let had_newline = lines[end - blank_after - 1].ends_with('\n');
+        if !had_newline
+            && blank_after == 0
+            && let Some(last) = table.last_mut()
+        {
+            last.pop();
+        }
+        table.extend(std::iter::repeat_n("\n".to_owned(), blank_after));
+        lines.splice(start..end, table);
+    }
+    let rewritten = lines.concat();
+    let after = parse(&rewritten)?;
+    let packages: BTreeSet<String> = after.crates.keys().cloned().collect();
+    let judged = judge(&before, &after, &packages);
+    if !judged.problems.is_empty() {
+        return Err(judged.problems.join("\n"));
+    }
+    if judged.tightened != raised {
+        return Err(format!(
+            "the rewrite tightened {:?}, not the raised {raised:?}",
+            judged.tightened
+        ));
+    }
+    Ok(rewritten)
 }
 
 pub(crate) fn completeness_problems(floors: &Floors, workspace: &Workspace) -> Vec<String> {
@@ -597,6 +708,82 @@ pub(crate) mod tests {
                 (Ok(()), Ok(())) => {}
                 (Err(message), Err(part)) if message.contains(part) => {}
                 _ => wrong.push(format!("{name}: expected {expected:?}, found {found:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    fn measurement(name: &str, caught: u64, missed: u64) -> Measurement {
+        Measurement {
+            package: name.to_owned(),
+            cargo_mutants: "27.1.0".to_owned(),
+            nextest: "0.9.143".to_owned(),
+            toolchain: "rustc 1.100.0-nightly (5db7f4be8 2026-09-01)".to_owned(),
+            measured: "2026-12-07".to_owned(),
+            commit: "feed".to_owned(),
+            caught,
+            missed,
+            timeout: 0,
+            unviable: 4,
+        }
+    }
+
+    #[test]
+    fn raised_floors_keep_the_file_format() {
+        let before = format!(
+            "{}{}{}",
+            unmeasured("a"),
+            measured("b", "0.80", (80, 0, 20)).text(),
+            measured("c", "0.90", (90, 0, 10)).text()
+        );
+        let raised_b = "[crate.b]\nfloor = 0.83\nscope = \"crate and direct dependents\"\ncargo_mutants = \"27.1.0\"\nnextest = \"0.9.143\"\ntoolchain = \"rustc 1.100.0-nightly (5db7f4be8 2026-09-01)\"\nmeasured = \"2026-12-07\"\ncommit = \"feed\"\ncaught = 83\nmissed = 17\ntimeout = 0\nunviable = 4\n\n";
+        let after = raise(&before, &[measurement("b", 83, 17)]).unwrap();
+        assert_eq!(
+            after,
+            format!(
+                "{}{raised_b}{}",
+                unmeasured("a"),
+                measured("c", "0.90", (90, 0, 10)).text()
+            )
+        );
+        let packages: BTreeSet<String> = ["a", "b", "c"].map(str::to_owned).into();
+        let after_floors = parse(&after).unwrap();
+        let judged = judge(&parse(&before).unwrap(), &after_floors, &packages);
+        assert!(judged.problems.is_empty(), "{:?}", judged.problems);
+        assert_eq!(judged.tightened, BTreeSet::from(["b".to_owned()]));
+        assert_eq!(
+            after_floors.hundredths("b"),
+            measurement("b", 83, 17).hundredths()
+        );
+
+        let last = format!(
+            "{}{}",
+            unmeasured("a"),
+            measured("b", "0.80", (80, 0, 20)).text().trim_end()
+        );
+        let raised_last = raise(&last, &[measurement("b", 83, 17)]).unwrap();
+        assert!(raised_last.ends_with("unviable = 4"), "{raised_last:?}");
+        assert!(parse(&raised_last).is_ok());
+
+        let rows: [(&str, Vec<Measurement>, &str); 4] = [
+            ("a crate with no table", vec![measurement("z", 90, 10)], "z"),
+            (
+                "an unmeasured crate is never enrolled",
+                vec![measurement("a", 90, 10)],
+                "a",
+            ),
+            (
+                "a floor that does not rise",
+                vec![measurement("b", 80, 20)],
+                "b",
+            ),
+            ("a floor that falls", vec![measurement("c", 85, 15)], "c"),
+        ];
+        let mut wrong = Vec::new();
+        for (name, raises, part) in rows {
+            match raise(&before, &raises) {
+                Err(message) if message.contains(part) => {}
+                other => wrong.push(format!("{name}: {other:?}")),
             }
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));

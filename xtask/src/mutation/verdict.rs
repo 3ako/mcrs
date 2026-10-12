@@ -93,30 +93,52 @@ fn incomplete(plan: &Plan, results: &BTreeMap<usize, Vec<Measured>>) -> Vec<Stri
         .filter(|index| !results.contains_key(index))
         .map(|index| format!("shard {index} is missing"))
         .collect();
-    for (unit_index, unit) in plan.units.iter().enumerate() {
-        let shards: Vec<usize> = (0..plan.shards.len())
-            .filter(|&index| plan.shards[index].unit == unit_index)
-            .collect();
-        if shards.iter().any(|index| !results.contains_key(index)) {
-            continue;
-        }
-        let mut ran: BTreeMap<&str, usize> = BTreeMap::new();
-        for mutant in shards.iter().flat_map(|index| &results[index]) {
-            *ran.entry(&mutant.name).or_default() += 1;
-        }
-        let expected: BTreeSet<&str> = unit.names.iter().map(String::as_str).collect();
-        let package = &unit.package;
-        for name in expected.iter().filter(|name| !ran.contains_key(*name)) {
-            problems.push(format!("{package}: {name} was not run"));
-        }
-        for (name, count) in &ran {
-            if !expected.contains(name) {
-                problems.push(format!(
-                    "{package}: {name} was run, but the plan does not list it"
-                ));
-            } else if *count > 1 {
-                problems.push(format!("{package}: {name} was run twice"));
-            }
+    for unit_index in 0..plan.units.len() {
+        problems.extend(unit_problems(plan, unit_index, results));
+    }
+    problems
+}
+
+pub(crate) fn missing_shards(
+    plan: &Plan,
+    unit_index: usize,
+    results: &BTreeMap<usize, Vec<Measured>>,
+) -> Vec<String> {
+    (0..plan.shards.len())
+        .filter(|&index| plan.shards[index].unit == unit_index && !results.contains_key(&index))
+        .map(|index| format!("shard {index} is missing"))
+        .collect()
+}
+
+pub(crate) fn unit_problems(
+    plan: &Plan,
+    unit_index: usize,
+    results: &BTreeMap<usize, Vec<Measured>>,
+) -> Vec<String> {
+    let unit = &plan.units[unit_index];
+    let shards: Vec<usize> = (0..plan.shards.len())
+        .filter(|&index| plan.shards[index].unit == unit_index)
+        .collect();
+    if shards.iter().any(|index| !results.contains_key(index)) {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let mut ran: BTreeMap<&str, usize> = BTreeMap::new();
+    for mutant in shards.iter().flat_map(|index| &results[index]) {
+        *ran.entry(&mutant.name).or_default() += 1;
+    }
+    let expected: BTreeSet<&str> = unit.names.iter().map(String::as_str).collect();
+    let package = &unit.package;
+    for name in expected.iter().filter(|name| !ran.contains_key(*name)) {
+        problems.push(format!("{package}: {name} was not run"));
+    }
+    for (name, count) in &ran {
+        if !expected.contains(name) {
+            problems.push(format!(
+                "{package}: {name} was run, but the plan does not list it"
+            ));
+        } else if *count > 1 {
+            problems.push(format!("{package}: {name} was run twice"));
         }
     }
     problems
@@ -411,6 +433,7 @@ mod tests {
                 .collect(),
             broken: Vec::new(),
             surface: Vec::new(),
+            matrix: None,
         }
     }
 
