@@ -182,6 +182,16 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
             "a tree exported from git does not build or its identity tests fail",
             "commit every file the build needs",
         ),
+        Check::Mutation => {
+            let Head::Commit(head) = &ctx.head else {
+                return Err("the mutation check reads a commit, not the working tree".to_owned());
+            };
+            if ctx.trigger == Trigger::Mutation {
+                mutation::verdict::check(&ctx.root, head)
+            } else {
+                mutation::local(&ctx.root, ctx.workspace()?, ctx.base()?, head)
+            }
+        }
     }
 }
 
