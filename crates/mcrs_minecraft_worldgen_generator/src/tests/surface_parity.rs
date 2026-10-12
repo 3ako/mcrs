@@ -1,7 +1,7 @@
 use bytes::Buf;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_fixtures::fixture;
+use mcrs_minecraft_worldgen_testing::dump_string;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use mcrs_minecraft_chunk::VoxelId;
 use mcrs_minecraft_registry::BlockStateId;
@@ -44,10 +44,7 @@ impl Dump {
 }
 
 fn read_dump(name: &str) -> Dump {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/tests/fixtures")
-        .join(name);
-    let mut r = open_dump(&path, MAGIC);
+    let mut r = bytes::Bytes::from(fixture("surface").file(name).dump(MAGIC));
     assert_eq!(dump_string(&mut r), "minecraft:overworld");
     let seed = r.get_i64_le() as u64;
     let chunk_x = r.get_i32_le();

@@ -22,6 +22,7 @@ use mcrs_minecraft_block_predicate::provider::{
 use mcrs_minecraft_chunk::Blocks as _;
 use mcrs_minecraft_chunk::VoxelId;
 use mcrs_minecraft_core::BlockPos;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_random::Random;
 use mcrs_minecraft_random::worldgen::WorldgenRandom;
 use mcrs_minecraft_worldgen_feature::placer::{
@@ -37,9 +38,8 @@ use mcrs_minecraft_worldgen_feature_place::tree::trunk::{TreeStates, Trunk};
 use mcrs_minecraft_worldgen_feature_place::tree::{
     CompiledTree, LeafDistances, TreeTables, place_tree,
 };
-use mcrs_minecraft_worldgen_testing::{dump_placements, dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::{dump_placements, dump_string};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 const MAGIC: &[u8; 8] = b"MCTREEG0";
@@ -57,9 +57,8 @@ struct DumpCase {
 }
 
 fn read_dump() -> Vec<DumpCase> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vanilla/tree_geometry.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("tree_geometry");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let case_count = r.get_u32_le() as usize;
     let cases: Vec<DumpCase> = (0..case_count)
         .map(|_| {
@@ -79,7 +78,7 @@ fn read_dump() -> Vec<DumpCase> {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     cases
 }
 

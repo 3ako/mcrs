@@ -2,7 +2,7 @@
 //! engine against every file the game ships rather than against a fixture.
 
 use mcrs_minecraft_biome::Biome;
-use mcrs_minecraft_core::{ResourceLocation, VERSION};
+use mcrs_minecraft_core::ResourceLocation;
 use mcrs_minecraft_environment::timeline::Timeline;
 use mcrs_minecraft_environment::world_clock::WorldClock;
 use mcrs_minecraft_registry::static_report::shipped_report;
@@ -571,31 +571,6 @@ pub fn round_trips<T: DeserializeOwned + serde::Serialize>(folder: &str) -> usiz
 pub fn dump_string(r: &mut impl bytes::Buf) -> String {
     let len = r.get_u32_le() as usize;
     String::from_utf8(r.copy_to_bytes(len).to_vec()).unwrap()
-}
-
-/// One of the oracle's little-endian dumps past its header: the eight-byte
-/// `magic`, format version 1, and the world version.
-pub fn open_dump(path: &Path, magic: &[u8; 8]) -> bytes::Bytes {
-    use bytes::Buf;
-    let data = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let mut r = bytes::Bytes::from(data);
-    assert_eq!(
-        r.copy_to_bytes(8).as_ref(),
-        magic,
-        "{} is not a {} dump",
-        path.display(),
-        String::from_utf8_lossy(magic)
-    );
-    assert_eq!(r.get_u32_le(), 1, "unsupported oracle format version");
-    let found = r.get_u32_le();
-    let expected = u32::try_from(VERSION.world_version).expect("the world version is negative");
-    assert_eq!(
-        found,
-        expected,
-        "{}: dumped at world version {found}, the corpus is at {expected}",
-        path.display()
-    );
-    r
 }
 
 /// A palette of state names followed by positions indexing into it, as the

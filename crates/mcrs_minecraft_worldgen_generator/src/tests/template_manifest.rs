@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
 
 use bytes::Buf;
 use mcrs_minecraft_chunk::VoxelId;
 use mcrs_minecraft_core::ResourceLocation;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::nbt_compress::from_gzip_bytes;
 use mcrs_minecraft_worldgen_feature::template::{
     FrozenTemplate, Joint, PaletteState, Template, TemplateManifest,
 };
-use mcrs_minecraft_worldgen_testing::{dump_placements, dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::{dump_placements, dump_string};
 
 use super::corpus;
 use crate::structures::{DYNAMIC_SHAPE_BLOCKS, resolve_palette_state};
@@ -50,8 +50,8 @@ struct DumpListed {
 }
 
 fn read_dump() -> (Vec<String>, Vec<DumpManifest>, Vec<DumpListed>) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/templates.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("templates");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let dynamic = (0..r.get_u32_le()).map(|_| dump_string(&mut r)).collect();
     let manifests = (0..r.get_u32_le())
         .map(|_| DumpManifest {
@@ -105,7 +105,7 @@ fn read_dump() -> (Vec<String>, Vec<DumpManifest>, Vec<DumpListed>) {
                 .collect(),
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     (dynamic, manifests, listed)
 }
 

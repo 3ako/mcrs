@@ -82,15 +82,13 @@ fn preset_biomes(
 mod tests {
     use super::*;
     use bytes::Buf;
-    use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
-    use std::path::Path;
+    use mcrs_minecraft_fixtures::fixture;
+    use mcrs_minecraft_worldgen_testing::dump_string;
 
     /// The reference's own `possibleBiomes`, per source, from the dump the
     /// feature-order oracle wrote.
     fn dumped_biomes() -> BTreeMap<String, Vec<String>> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../mcrs_minecraft_worldgen_feature/tests/fixtures/vanilla/feature_steps.bin");
-        let mut r = open_dump(&path, b"MCFSTEP0");
+        let mut r = bytes::Bytes::from(fixture("feature_steps").dump(b"MCFSTEP0"));
 
         let mut sources = BTreeMap::new();
         for _ in 0..r.get_i32_le() {

@@ -1,5 +1,4 @@
 use mcrs_minecraft_core::ColumnPos;
-use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use bevy_math::IVec3;
@@ -7,9 +6,10 @@ use bytes::Buf;
 use fixedbitset::FixedBitSet;
 use mcrs_minecraft_biome::source::BiomeSource;
 use mcrs_minecraft_core::ResourceLocation;
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_worldgen_density::program::Workspace;
 use mcrs_minecraft_worldgen_feature::placer::WorldStates;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 use super::structures::{frozen_shared, preset};
 use super::{
@@ -88,9 +88,8 @@ fn read_sites(r: &mut bytes::Bytes) -> Vec<(String, Vec<DumpStructure>)> {
 }
 
 fn read_dump() -> Vec<DumpSeed> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/structure_sites.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("structure_placement").file("structure_sites.bin");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let seeds = (0..r.get_u32_le())
         .map(|_| DumpSeed {
             seed: r.get_i64_le(),
@@ -140,7 +139,7 @@ fn read_dump() -> Vec<DumpSeed> {
                 .collect(),
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     seeds
 }
 

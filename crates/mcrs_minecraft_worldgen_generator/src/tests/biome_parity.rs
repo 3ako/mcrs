@@ -1,6 +1,6 @@
 use bytes::Buf;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
-use std::path::PathBuf;
+use mcrs_minecraft_fixtures::fixture;
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 use super::build_settings_router;
 use super::multi_noise_biomes::overworld_table;
@@ -29,9 +29,7 @@ impl Column {
 }
 
 fn read_dump() -> Vec<Column> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/biome_containers.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let mut r = bytes::Bytes::from(fixture("biome_containers").dump(MAGIC));
     let columns = (0..r.get_u32_le())
         .map(|_| {
             let seed = r.get_i64_le() as u64;

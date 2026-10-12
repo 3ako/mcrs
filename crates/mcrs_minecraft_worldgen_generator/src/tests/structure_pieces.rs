@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::PathBuf;
 
 use bevy_math::IVec3;
 use bytes::Buf;
 use mcrs_minecraft_core::{BoundingBox, ColumnPos, ResourceLocation};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::compound::NbtCompound;
 use mcrs_minecraft_nbt::deserializer::NbtReadHelper;
 use mcrs_minecraft_nbt::{Nbt, to_nbt_compound};
 use mcrs_minecraft_worldgen_structure::piece::PieceContext;
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 use super::structure_sites::{build_index, dimension};
 use super::structures::frozen_shared;
@@ -56,9 +56,8 @@ pub(super) fn read_box(r: &mut impl Buf) -> BoundingBox {
 }
 
 fn read_dump() -> Vec<DumpCase> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/structure_pieces.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("structure_pieces");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let cases = (0..r.get_u32_le())
         .map(|_| {
             let seed = r.get_i64_le();
@@ -81,7 +80,7 @@ fn read_dump() -> Vec<DumpCase> {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     cases
 }
 

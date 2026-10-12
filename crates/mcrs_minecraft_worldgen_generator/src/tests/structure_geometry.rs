@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use bevy_math::IVec3;
@@ -7,6 +6,7 @@ use bytes::Buf;
 use mcrs_minecraft_block_predicate::predicate::HeightmapName;
 use mcrs_minecraft_chunk::{BoxVolume, Volume, VoxelId};
 use mcrs_minecraft_core::{BlockPos, BoundingBox, ColumnPos, ResourceLocation};
+use mcrs_minecraft_fixtures::fixture;
 use mcrs_minecraft_nbt::compound::NbtCompound;
 use mcrs_minecraft_nbt::to_nbt_compound;
 use mcrs_minecraft_random::Random;
@@ -19,7 +19,7 @@ use mcrs_minecraft_worldgen_feature_place::entity::GeneratedEntity;
 use mcrs_minecraft_worldgen_structure::frozen::{FrozenStructures, StructureKind};
 use mcrs_minecraft_worldgen_structure::piece::Start;
 use mcrs_minecraft_worldgen_structure::site::{BaseColumn, Context, SiteWorld, layout, site};
-use mcrs_minecraft_worldgen_testing::{dump_string, open_dump};
+use mcrs_minecraft_worldgen_testing::dump_string;
 
 use super::structure_pieces::{read_box, read_nbt};
 use super::structures::frozen_shared;
@@ -76,9 +76,8 @@ struct Dump {
 }
 
 fn read_dump() -> Dump {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/structure_geometry.bin");
-    let mut r = open_dump(&path, MAGIC);
+    let source = fixture("structure_geometry");
+    let mut r = bytes::Bytes::from(source.dump(MAGIC));
     let vec3 = |r: &mut bytes::Bytes| [r.get_i32_le(), r.get_i32_le(), r.get_i32_le()];
     let palette = (0..r.get_u32_le()).map(|_| dump_string(&mut r)).collect();
     let cases = (0..r.get_u32_le())
@@ -160,7 +159,7 @@ fn read_dump() -> Dump {
             }
         })
         .collect();
-    assert!(!r.has_remaining(), "trailing bytes in {}", path.display());
+    assert!(!r.has_remaining(), "trailing bytes in {}", source.name());
     Dump { palette, cases }
 }
 
