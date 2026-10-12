@@ -54,6 +54,10 @@ pub use into_text::IntoText;
 
 pub struct PlainSeparator;
 
+pub fn combined_width(a: u32, b: u32) -> u32 {
+    a + b
+}
+
 /// Represents formatted text in Minecraft's JSON text format.
 ///
 /// Text is used in various places such as chat, window titles,
