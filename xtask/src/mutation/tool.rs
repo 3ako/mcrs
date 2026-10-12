@@ -3,6 +3,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 pub(crate) const VERSION: &str = "27.1.0";
+#[expect(dead_code)]
+pub(crate) const TEST_TIMEOUT_SECONDS: u32 = 360;
+const BUILD_TIMEOUT_SECONDS: u32 = 840;
+pub(crate) const MATRIX_TEST_TIMEOUT_SECONDS: u32 = 360;
 
 const SCRUBBED_PREFIXES: [&str; 2] = ["CARGO_MUTANTS_", "NEXTEST_"];
 
@@ -41,7 +45,6 @@ pub(crate) struct Spec<'a> {
     pub in_diff: Option<&'a Path>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) enum Mode<'a> {
     List,
     Run {
@@ -49,7 +52,6 @@ pub(crate) enum Mode<'a> {
         output: &'a Path,
         skip_baseline: bool,
         test_timeout_seconds: u32,
-        build_timeout_seconds: u32,
     },
 }
 
@@ -59,6 +61,10 @@ pub(crate) fn command(spec: &Spec) -> Command {
 
 fn inherited_names() -> Vec<OsString> {
     std::env::vars_os().map(|(name, _)| name).collect()
+}
+
+pub(crate) fn cargo(tree: &Path) -> Command {
+    base(tree, &inherited_names())
 }
 
 fn base(tree: &Path, environment: &[OsString]) -> Command {
@@ -98,7 +104,6 @@ fn command_with(spec: &Spec, environment: &[OsString]) -> Command {
         output,
         skip_baseline,
         test_timeout_seconds,
-        build_timeout_seconds,
     } = &spec.mode
     {
         command
@@ -111,7 +116,7 @@ fn command_with(spec: &Spec, environment: &[OsString]) -> Command {
             .arg("--timeout")
             .arg(test_timeout_seconds.to_string())
             .arg("--build-timeout")
-            .arg(build_timeout_seconds.to_string())
+            .arg(BUILD_TIMEOUT_SECONDS.to_string())
             .arg("--output")
             .arg(output)
             .arg("--test-package")
@@ -204,7 +209,6 @@ mod tests {
                 output: Path::new("/out"),
                 skip_baseline: true,
                 test_timeout_seconds: 360,
-                build_timeout_seconds: 840,
             },
             shard: Some((2, 5)),
             in_diff: Some(Path::new("/tree/target/mutation/change.diff")),

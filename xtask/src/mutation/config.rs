@@ -12,6 +12,7 @@ const LISTING_DIR: &str = "target/mutation/config";
 const TEST_TOOL: &str = "nextest";
 const PROFILE: &str = "mutants";
 const TEST_ARGS: [&str; 2] = ["--profile=mutants", "--no-tests=pass"];
+const MATRIX_TEST_ARGS: [&str; 2] = ["--profile=mutants-matrix", "--no-tests=pass"];
 const REGEX_METACHARACTERS: &str = "\\.+*?()|[]{}^$";
 const POSITION: &str = r":\d+:\d+: ";
 const WRITE_AS: &str = "\"<pattern>\", # <reason>";
@@ -103,6 +104,55 @@ pub(crate) fn write_listing(repo: &Path, config: &Config) -> Result<PathBuf, Str
     std::fs::write(&path, listing_text(config))
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+fn toml_string(text: &str) -> String {
+    let mut quoted = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            c if c.is_control() => quoted.push_str(&format!("\\u{:04X}", c as u32)),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn matrix_text(config: &Config) -> String {
+    let exclusions: Vec<String> = config.exclude_re.iter().map(|p| toml_string(p)).collect();
+    format!(
+        "test_tool = {:?}\nprofile = {:?}\nadditional_cargo_test_args = {:?}\ngitignore = {}\nexclude_re = [{}]\n",
+        config.test_tool,
+        config.profile,
+        MATRIX_TEST_ARGS,
+        config.gitignore,
+        exclusions.join(", ")
+    )
+}
+
+pub(crate) fn write_matrix(repo: &Path, config: &Config) -> Result<PathBuf, String> {
+    let dir = repo.join(LISTING_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let path = dir.join("matrix.toml");
+    std::fs::write(&path, matrix_text(config))
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+pub(crate) fn base_config(repo: &Path, base: &str, head: &Head) -> Result<Config, String> {
+    let short = scope::short(base);
+    Ok(
+        match scope::configuration_at(repo, base, head, CONFIG_FILE)? {
+            None => Config::shared(),
+            Some(Found::AtBase(text)) => parse(&text, &format!("at the base {short}"))?,
+            Some(Found::Restored { last, .. }) => {
+                parse(&last, &format!("before its removal from the base {short}"))?
+            }
+        },
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -608,6 +658,27 @@ mod tests {
     }
 
     #[test]
+    fn the_matrix_variant_differs_from_the_base_only_in_the_test_profile() {
+        let quote_heavy = r"^src/lib\.rs:\d+:\d+: replace \* with / in double$";
+        let base = parse(
+            &with_entries(&entry_line(
+                quote_heavy,
+                "equivalent: the factor keeps the sign",
+            )),
+            "at the base abc",
+        )
+        .unwrap();
+        let variant = parse_shape(&matrix_text(&base)).unwrap();
+        assert_eq!(
+            variant.additional_cargo_test_args,
+            ["--profile=mutants-matrix", "--no-tests=pass"]
+        );
+        assert_eq!(variant.exclude_re, [quote_heavy]);
+        let rest = |c: &Config| (c.test_tool.clone(), c.profile.clone(), c.gitignore);
+        assert_eq!(rest(&variant), rest(&base));
+    }
+
+    #[test]
     fn the_mutation_configuration_holds_only_the_shared_keys() {
         let with = |extra: &str| format!("{SHARED}{extra}\n");
         let swap = |from: &str, to: &str| SHARED.replace(from, to);
@@ -726,6 +797,7 @@ mod tests {
                     dir: String::new(),
                     edition: "2024".to_owned(),
                     dependencies: Vec::new(),
+                    targets: Vec::new(),
                 }],
             }
         }
