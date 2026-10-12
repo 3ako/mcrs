@@ -183,17 +183,18 @@ cargo run -p mcrs_minecraft_update -- recapture --all
 
 A recapture runs the fixture's Gradle task into a temporary directory, copies
 the files it wrote to their fixture directories and records the fixture in
-`tools/captures.json`. The table `FIXTURES` in `src/fixtures.rs` is the one
-place that states a fixture's name, task and destination. With `--all` every
-fixture is recaptured in turn, a failure does not stop the others, and the exit
-status is non-zero if any failed. An unknown name prints the known names. The
-update command itself recaptures nothing.
+`tools/captures.json`. The table in `tools/fixtures.json` is the one place that
+states a fixture's name, task and destination; this tool and the tests read it
+through `mcrs_minecraft_fixtures`. With `--all` every fixture is recaptured in
+turn, a failure does not stop the others, and the exit status is non-zero if
+any failed. An unknown name prints the known names. The update command itself
+recaptures nothing.
 
 `tools/captures.json` maps each fixture name to the id of the corpus version it
-was captured at. A test in this crate fails by name for every fixture whose
-entry is not the id in `assets/minecraft/version.json`, for a fixture missing
-from the file and for an entry that names no fixture. After an update that test
-is the list of fixtures to recapture.
+was captured at. A test in `mcrs_minecraft_fixtures` fails by name for every
+fixture whose entry is not the id in `assets/minecraft/version.json`, for a
+fixture missing from the file and for an entry that names no fixture. After an
+update that test is the list of fixtures to recapture.
 
 A golden that carries its own cases is rewritten from them: the inputs are
 kept and the game supplies every expected value. When the game rejects an input

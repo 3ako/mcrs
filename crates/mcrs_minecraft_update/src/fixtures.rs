@@ -4,248 +4,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mcrs_minecraft_core::Version;
+use mcrs_minecraft_fixtures::{Entry, Files, MANIFEST, Output};
 
 use crate::gradle;
 use crate::release;
 
-pub const MANIFEST: &str = "tools/captures.json";
 const VERSION_FILE: &str = "assets/minecraft/version.json";
 pub const ORACLE: &str = "tools/vanilla-oracle";
-const GOLDEN_TASK: &str = "dumpGolden";
-const GENERATOR_FIXTURES: &str = "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures";
-const TEXT_FIXTURES: &str = "crates/mcrs_minecraft_protocol/tests/fixtures/text";
-const ITEM_FIXTURES: &str = "crates/mcrs_minecraft_protocol/tests/fixtures/item";
-const PROTOCOL_FIXTURES: &str = "crates/mcrs_minecraft_protocol/tests/fixtures";
-const ANVIL_FIXTURES: &str = "crates/mcrs_minecraft_anvil/src/fixtures/vanilla";
-const WORLD_FIXTURES: &str = "crates/mcrs_minecraft_world/tests/fixtures";
-const PLACE_FIXTURES: &str = "crates/mcrs_minecraft_worldgen_feature_place/tests/fixtures/vanilla";
-
-pub enum Files {
-    Named(&'static str),
-    Matching(&'static str),
-}
-
-pub struct Output {
-    pub files: Files,
-    pub to: &'static str,
-}
-
-pub struct Fixture {
-    pub name: &'static str,
-    pub task: &'static str,
-    pub outputs: &'static [Output],
-}
-
-const fn named(file: &'static str, to: &'static str) -> Output {
-    Output {
-        files: Files::Named(file),
-        to,
-    }
-}
-
-const fn matching(pattern: &'static str, to: &'static str) -> Output {
-    Output {
-        files: Files::Matching(pattern),
-        to,
-    }
-}
-
-const fn dump(name: &'static str, task: &'static str, outputs: &'static [Output]) -> Fixture {
-    Fixture {
-        name,
-        task,
-        outputs,
-    }
-}
-
-const fn golden(name: &'static str, outputs: &'static [Output]) -> Fixture {
-    dump(name, GOLDEN_TASK, outputs)
-}
-
-pub const FIXTURES: &[Fixture] = &[
-    dump(
-        "density",
-        "dumpOracle",
-        &[matching(
-            "overworld_s*_c*.bin",
-            "crates/mcrs_minecraft_worldgen_density/tests/fixtures/vanilla",
-        )],
-    ),
-    dump(
-        "surface",
-        "dumpSurface",
-        &[matching("surface_s*_c*.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "biome_containers",
-        "dumpBiomes",
-        &[named("biome_containers.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "feature_steps",
-        "dumpFeatureSteps",
-        &[named(
-            "feature_steps.bin",
-            "crates/mcrs_minecraft_worldgen_feature/tests/fixtures/vanilla",
-        )],
-    ),
-    dump(
-        "ore_vein",
-        "dumpOreVeins",
-        &[named("ore_vein.bin", PLACE_FIXTURES)],
-    ),
-    dump(
-        "tree_geometry",
-        "dumpTrees",
-        &[named("tree_geometry.bin", PLACE_FIXTURES)],
-    ),
-    dump(
-        "templates",
-        "dumpTemplates",
-        &[named("templates.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "structure_placement",
-        "dumpPlacement",
-        &[
-            named(
-                "structure_cells.bin",
-                "crates/mcrs_minecraft_worldgen_structure/tests/fixtures/vanilla",
-            ),
-            named("structure_sites.bin", GENERATOR_FIXTURES),
-        ],
-    ),
-    dump(
-        "structure_layouts",
-        "dumpJigsaw",
-        &[named("structure_layouts.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "template_placement",
-        "dumpTemplatePlacement",
-        &[named("template_placement.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "beard",
-        "dumpBeard",
-        &[named(
-            "beard.bin",
-            "crates/mcrs_minecraft_worldgen/tests/fixtures/vanilla",
-        )],
-    ),
-    dump(
-        "registry_census",
-        "dumpRegistryCensus",
-        &[named(
-            "registry_census.bin",
-            "crates/mcrs_minecraft_world/src/entity/fixtures",
-        )],
-    ),
-    dump(
-        "structure_pieces",
-        "dumpStructurePieces",
-        &[named("structure_pieces.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "structure_geometry",
-        "dumpStructureGeometry",
-        &[named("structure_geometry.bin", GENERATOR_FIXTURES)],
-    ),
-    dump(
-        "vanilla_chunk",
-        "dumpChunks",
-        &[
-            named("chunk_full.nbt", ANVIL_FIXTURES),
-            named("chunk_terrain.nbt", ANVIL_FIXTURES),
-            named("chunk_retrogen.nbt", ANVIL_FIXTURES),
-            named("chunk_retrogen_minimal.nbt", ANVIL_FIXTURES),
-        ],
-    ),
-    golden(
-        "snbt",
-        &[named("snbt.json", "crates/mcrs_minecraft_nbt/src/fixtures")],
-    ),
-    golden(
-        "hash_ops",
-        &[named(
-            "hash_ops.json",
-            "crates/mcrs_minecraft_item/src/fixtures",
-        )],
-    ),
-    golden("text_vanilla", &[named("vanilla.json", TEXT_FIXTURES)]),
-    golden("text_probe", &[named("probe.json", TEXT_FIXTURES)]),
-    golden("text_nbt", &[named("nbt.json", TEXT_FIXTURES)]),
-    golden("text_wire", &[named("wire.json", TEXT_FIXTURES)]),
-    golden("item_plain", &[named("plain_golden.json", ITEM_FIXTURES)]),
-    golden("item_nested", &[named("nested_golden.json", ITEM_FIXTURES)]),
-    golden(
-        "item_predicate",
-        &[named("predicate_vanilla.json", ITEM_FIXTURES)],
-    ),
-    golden("item_kinds", &[named("kinds.json", ITEM_FIXTURES)]),
-    golden(
-        "item_holders",
-        &[named("holders_golden.txt", ITEM_FIXTURES)],
-    ),
-    golden(
-        "item_registry_refs",
-        &[named("registry_refs_golden.txt", ITEM_FIXTURES)],
-    ),
-    golden(
-        "item_records",
-        &[named("vanilla_records.txt", ITEM_FIXTURES)],
-    ),
-    golden(
-        "recipe_packets",
-        &[named("recipe_packets_golden.txt", PROTOCOL_FIXTURES)],
-    ),
-    golden(
-        "particles",
-        &[named("particles_golden.txt", PROTOCOL_FIXTURES)],
-    ),
-    golden(
-        "inventory_packets",
-        &[named("inventory_packets_golden.txt", PROTOCOL_FIXTURES)],
-    ),
-    golden(
-        "join_packets",
-        &[named("join_packets_golden.txt", PROTOCOL_FIXTURES)],
-    ),
-    golden(
-        "serverbound_game_packets",
-        &[named(
-            "serverbound_game_packets_golden.txt",
-            PROTOCOL_FIXTURES,
-        )],
-    ),
-    golden("frames", &[named("frames_golden.txt", PROTOCOL_FIXTURES)]),
-    golden(
-        "vanilla_player",
-        &[named("vanilla_player.dat", WORLD_FIXTURES)],
-    ),
-    golden(
-        "registry_values",
-        &[named("registry_values.txt", WORLD_FIXTURES)],
-    ),
-];
 
 pub type Manifest = BTreeMap<String, String>;
-
-pub fn names() -> Vec<&'static str> {
-    FIXTURES.iter().map(|fixture| fixture.name).collect()
-}
-
-pub fn lookup(name: &str) -> Result<&'static Fixture, String> {
-    FIXTURES
-        .iter()
-        .find(|fixture| fixture.name == name)
-        .ok_or_else(|| {
-            format!(
-                "unknown fixture {name}; known fixtures: {}",
-                names().join(", ")
-            )
-        })
-}
 
 pub fn corpus_id(root: &Path) -> Result<String, String> {
     let path = root.join(VERSION_FILE);
@@ -272,38 +39,6 @@ pub fn record(path: &Path, name: &str, id: &str) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-#[cfg(test)]
-pub fn stale(manifest: &Manifest, id: &str) -> Vec<String> {
-    let missing_or_other = FIXTURES
-        .iter()
-        .filter(|fixture| manifest.get(fixture.name).map(String::as_str) != Some(id))
-        .map(|fixture| fixture.name.to_owned());
-    let unknown = manifest
-        .keys()
-        .filter(|key| !FIXTURES.iter().any(|fixture| fixture.name == key.as_str()))
-        .cloned();
-    missing_or_other.chain(unknown).collect()
-}
-
-fn matches(pattern: &str, name: &str) -> bool {
-    let mut parts = pattern.split('*');
-    let first = parts.next().unwrap_or_default();
-    let Some(mut rest) = name.strip_prefix(first) else {
-        return false;
-    };
-    let mut parts: Vec<&str> = parts.collect();
-    let Some(last) = parts.pop() else {
-        return rest.is_empty();
-    };
-    for part in parts {
-        match rest.find(part) {
-            Some(at) => rest = &rest[at + part.len()..],
-            None => return false,
-        }
-    }
-    rest.ends_with(last)
-}
-
 fn read_non_empty(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if bytes.is_empty() {
@@ -312,11 +47,11 @@ fn read_non_empty(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn collect(root: &Path, fixture: &Fixture, out: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+fn collect(root: &Path, fixture: &Entry, out: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut found = Vec::new();
-    for output in fixture.outputs {
-        let to = root.join(output.to);
-        match output.files {
+    for output in &fixture.outputs {
+        let to = root.join(&output.to);
+        match &output.files {
             Files::Named(name) => found.push((to.join(name), read_non_empty(&out.join(name))?)),
             Files::Matching(pattern) => {
                 let mut names = Vec::new();
@@ -326,7 +61,7 @@ fn collect(root: &Path, fixture: &Fixture, out: &Path) -> Result<Vec<(PathBuf, V
                     let entry = entry.map_err(|error| format!("{}: {error}", out.display()))?;
                     if entry.path().is_file() {
                         let name = entry.file_name();
-                        if !matches(pattern, &name.to_string_lossy()) {
+                        if !output.files.matches(&name.to_string_lossy()) {
                             return Err(format!(
                                 "{}: the file does not match {pattern}; widen the fixture's pattern and its .gitattributes line together",
                                 entry.path().display()
@@ -348,7 +83,7 @@ fn collect(root: &Path, fixture: &Fixture, out: &Path) -> Result<Vec<(PathBuf, V
     Ok(found)
 }
 
-pub fn store(root: &Path, fixture: &Fixture, out: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn store(root: &Path, fixture: &Entry, out: &Path) -> Result<Vec<PathBuf>, String> {
     let files = collect(root, fixture, out)?;
     let staged: Vec<PathBuf> = files
         .iter()
@@ -392,19 +127,19 @@ pub fn with_scratch<T>(
 
 pub fn capture(
     root: &Path,
-    fixture: &Fixture,
+    fixture: &Entry,
     run: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<Vec<PathBuf>, String> {
     let id = corpus_id(root)?;
-    with_scratch(fixture.name, |out| {
+    with_scratch(&fixture.name, |out| {
         run(out)?;
         let copied = store(root, fixture, out)?;
-        record(&root.join(MANIFEST), fixture.name, &id)?;
+        record(&root.join(MANIFEST), &fixture.name, &id)?;
         Ok(copied)
     })
 }
 
-fn current_file(root: &Path, fixture: &Fixture) -> Result<PathBuf, String> {
+fn current_file(root: &Path, fixture: &Entry) -> Result<PathBuf, String> {
     match fixture.outputs.first() {
         Some(Output {
             files: Files::Named(file),
@@ -419,26 +154,26 @@ fn current_file(root: &Path, fixture: &Fixture) -> Result<PathBuf, String> {
 
 fn properties<'a>(
     root: &Path,
-    fixture: &'a Fixture,
+    fixture: &'a Entry,
     out: &'a Path,
 ) -> Result<Vec<(&'static str, String)>, String> {
     let out = gradle::utf8(out)?.to_owned();
-    if fixture.task != GOLDEN_TASK {
+    if !fixture.is_golden() {
         return Ok(vec![("oracleOut", out)]);
     }
     let current = current_file(root, fixture)?;
     Ok(vec![
-        ("golden", fixture.name.to_owned()),
+        ("golden", fixture.name.clone()),
         ("goldenIn", gradle::utf8(&current)?.to_owned()),
         ("goldenOut", out),
     ])
 }
 
-pub fn recapture(root: &Path, fixture: &Fixture) -> Result<Vec<PathBuf>, String> {
+pub fn recapture(root: &Path, fixture: &Entry) -> Result<Vec<PathBuf>, String> {
     capture(root, fixture, |out| {
         gradle::run(
             &root.join(ORACLE),
-            fixture.task,
+            &fixture.task,
             &properties(root, fixture, out)?,
         )
     })
@@ -448,15 +183,18 @@ pub fn recapture(root: &Path, fixture: &Fixture) -> Result<Vec<PathBuf>, String>
 mod tests {
     use super::*;
     use crate::testing::scratch;
+    use mcrs_minecraft_fixtures::{entry, table};
+
+    const GENERATOR_FIXTURES: &str = "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures";
 
     fn repository() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    fn root_for(fixture: &Fixture) -> PathBuf {
+    fn root_for(fixture: &Entry) -> PathBuf {
         let root = scratch("root");
-        for output in fixture.outputs {
-            fs::create_dir_all(root.join(output.to)).unwrap();
+        for output in &fixture.outputs {
+            fs::create_dir_all(root.join(&output.to)).unwrap();
         }
         fs::create_dir_all(root.join("tools")).unwrap();
         fs::create_dir_all(root.join("assets/minecraft")).unwrap();
@@ -464,8 +202,8 @@ mod tests {
         root
     }
 
-    fn fixture(name: &str) -> &'static Fixture {
-        lookup(name).unwrap()
+    fn fixture(name: &str) -> &'static Entry {
+        entry(name).unwrap()
     }
 
     fn produce(files: &[(&str, &[u8])]) -> PathBuf {
@@ -478,27 +216,6 @@ mod tests {
 
     fn id() -> &'static str {
         &mcrs_minecraft_core::VERSION.id
-    }
-
-    #[test]
-    fn every_fixture_was_captured_on_the_corpus_version() {
-        assert!(!FIXTURES.is_empty());
-        let manifest = read_manifest(&repository().join(MANIFEST)).unwrap();
-        let behind = stale(&manifest, id());
-        assert!(
-            behind.is_empty(),
-            "not captured on {}: {}",
-            id(),
-            behind.join(", ")
-        );
-    }
-
-    fn fixture_names_are_unique() {
-        let mut names = names();
-        let all = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), all);
     }
 
     fn a_dump_fixture_passes_only_the_oracle_output_directory() {
@@ -526,31 +243,6 @@ mod tests {
         );
     }
 
-    fn every_golden_current_file_exists_in_the_repository() {
-        let root = repository();
-        for fixture in FIXTURES
-            .iter()
-            .filter(|fixture| fixture.task == GOLDEN_TASK)
-        {
-            let current = current_file(&root, fixture).unwrap();
-            assert!(current.is_file(), "{}: {}", fixture.name, current.display());
-        }
-    }
-
-    fn every_destination_directory_exists_in_the_repository() {
-        let root = repository();
-        for fixture in FIXTURES {
-            for output in fixture.outputs {
-                assert!(
-                    root.join(output.to).is_dir(),
-                    "{}: {} is not a directory",
-                    fixture.name,
-                    output.to
-                );
-            }
-        }
-    }
-
     fn a_named_output_is_copied_to_its_destination() {
         let fixture = fixture("beard");
         let root = root_for(fixture);
@@ -576,23 +268,6 @@ mod tests {
             fs::read(to.join("overworld_s1_c0_0_dense.bin")).unwrap(),
             b"b"
         );
-    }
-
-    fn a_pattern_matches_what_its_dump_writes_and_nothing_else() {
-        for (fixture_name, name, expected) in [
-            ("density", "overworld_s-5_c-3_7.bin", true),
-            ("density", "overworld_s42_c0_0_dense.bin", true),
-            ("density", "overworld_s1.bin", false),
-            ("density", "xoverworld_s1_c0_0.bin", false),
-            ("density", "overworld_s1_c0_0.bin.bak", false),
-            ("surface", "surface_s7_c1_2.bin", true),
-            ("surface", "overworld_s7_c1_2.bin", false),
-        ] {
-            let Files::Matching(pattern) = fixture(fixture_name).outputs[0].files else {
-                panic!("{fixture_name} does not carry a pattern");
-            };
-            assert_eq!(matches(pattern, name), expected, "{pattern} against {name}");
-        }
     }
 
     fn a_fixture_with_two_destinations_writes_both() {
@@ -701,35 +376,6 @@ mod tests {
         assert_eq!(manifest.len(), 2);
     }
 
-    #[test]
-    fn a_fixture_is_stale_when_absent_or_on_another_id_and_so_is_an_unknown_key() {
-        let all: Vec<String> = names().into_iter().map(String::from).collect();
-        let full: Manifest = all.iter().map(|n| (n.clone(), "26.4".into())).collect();
-        let absent = read_manifest(&scratch("absent").join("captures.json")).unwrap();
-        let (mut lacking, mut behind, mut unknown) = (full.clone(), full.clone(), full);
-        lacking.remove("beard");
-        behind.insert("surface".into(), "26.3".into());
-        unknown.insert("no_such_fixture".into(), "26.4".into());
-        for (manifest, expected) in [
-            (Manifest::new(), all.clone()),
-            (absent, all),
-            (lacking, vec!["beard".to_owned()]),
-            (behind, vec!["surface".to_owned()]),
-            (unknown, vec!["no_such_fixture".to_owned()]),
-        ] {
-            assert_eq!(stale(&manifest, "26.4"), expected);
-        }
-    }
-
-    #[test]
-    fn an_unknown_fixture_name_is_an_error_that_lists_the_known_names() {
-        let error = lookup("no_such_fixture").err().unwrap();
-        assert!(error.contains("no_such_fixture"), "{error}");
-        for name in names() {
-            assert!(error.contains(name), "{error}");
-        }
-    }
-
     fn a_successful_capture_copies_and_records_the_corpus_id() {
         let fixture = fixture("beard");
         let root = root_for(fixture);
@@ -774,13 +420,6 @@ mod tests {
     }
 
     #[test]
-    fn the_fixture_table_agrees_with_the_repository() {
-        fixture_names_are_unique();
-        every_golden_current_file_exists_in_the_repository();
-        every_destination_directory_exists_in_the_repository();
-    }
-
-    #[test]
     fn the_task_properties_follow_the_fixture_kind() {
         a_dump_fixture_passes_only_the_oracle_output_directory();
         a_golden_fixture_passes_its_name_its_current_file_and_the_output_directory();
@@ -790,7 +429,6 @@ mod tests {
     fn storing_copies_every_output_to_its_destination() {
         a_named_output_is_copied_to_its_destination();
         a_pattern_output_copies_everything_the_task_wrote();
-        a_pattern_matches_what_its_dump_writes_and_nothing_else();
         a_fixture_with_two_destinations_writes_both();
     }
 
@@ -888,7 +526,7 @@ mod tests {
     }
 
     fn output_probe(output: &Output) -> String {
-        match output.files {
+        match &output.files {
             Files::Named(name) => format!("{}/{name}", output.to),
             Files::Matching(pattern) => format!("{}/{}", output.to, pattern.replace('*', "0")),
         }
@@ -914,20 +552,13 @@ mod tests {
         probes
     }
 
-    fn written_by(output: &Output, name: &str) -> bool {
-        match output.files {
-            Files::Named(file) => file == name,
-            Files::Matching(pattern) => matches(pattern, name),
-        }
-    }
-
     #[test]
     fn the_attributes_mark_every_tool_output_and_no_hand_written_file() {
         let mut problems = Vec::new();
 
-        let probes: Vec<String> = FIXTURES
+        let probes: Vec<String> = table()
             .iter()
-            .flat_map(|fixture| fixture.outputs)
+            .flat_map(|fixture| &fixture.outputs)
             .map(output_probe)
             .chain(data_probes())
             .collect();
@@ -937,10 +568,10 @@ mod tests {
             }
         }
 
-        let mut directories: Vec<&str> = FIXTURES
+        let mut directories: Vec<&str> = table()
             .iter()
-            .flat_map(|fixture| fixture.outputs)
-            .map(|output| output.to)
+            .flat_map(|fixture| &fixture.outputs)
+            .map(|output| output.to.as_str())
             .collect();
         directories.sort_unstable();
         directories.dedup();
@@ -948,11 +579,11 @@ mod tests {
             let children = tracked_children(directory);
             for (path, generated) in attributes_of(&children) {
                 let name = path.rsplit('/').next().unwrap();
-                let written = FIXTURES
+                let written = table()
                     .iter()
-                    .flat_map(|fixture| fixture.outputs)
+                    .flat_map(|fixture| &fixture.outputs)
                     .filter(|output| output.to == directory)
-                    .any(|output| written_by(output, name));
+                    .any(|output| output.files.matches(name));
                 match (written, generated) {
                     (true, false) => {
                         problems.push(format!("{path}: written by the update tool but not marked"))

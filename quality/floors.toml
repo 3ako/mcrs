@@ -46,6 +46,9 @@ floor = "unmeasured"
 [crate.mcrs_minecraft_environment]
 floor = "unmeasured"
 
+[crate.mcrs_minecraft_fixtures]
+floor = "unmeasured"
+
 [crate.mcrs_minecraft_game_rule]
 floor = "unmeasured"
 

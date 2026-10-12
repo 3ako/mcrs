@@ -1,0 +1,378 @@
+[
+  {
+    "name": "density",
+    "task": "dumpOracle",
+    "outputs": [
+      {
+        "pattern": "overworld_s*_c*.bin",
+        "to": "crates/mcrs_minecraft_worldgen_density/tests/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "surface",
+    "task": "dumpSurface",
+    "outputs": [
+      {
+        "pattern": "surface_s*_c*.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "biome_containers",
+    "task": "dumpBiomes",
+    "outputs": [
+      {
+        "file": "biome_containers.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "feature_steps",
+    "task": "dumpFeatureSteps",
+    "outputs": [
+      {
+        "file": "feature_steps.bin",
+        "to": "crates/mcrs_minecraft_worldgen_feature/tests/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "ore_vein",
+    "task": "dumpOreVeins",
+    "outputs": [
+      {
+        "file": "ore_vein.bin",
+        "to": "crates/mcrs_minecraft_worldgen_feature_place/tests/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "tree_geometry",
+    "task": "dumpTrees",
+    "outputs": [
+      {
+        "file": "tree_geometry.bin",
+        "to": "crates/mcrs_minecraft_worldgen_feature_place/tests/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "templates",
+    "task": "dumpTemplates",
+    "outputs": [
+      {
+        "file": "templates.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "structure_placement",
+    "task": "dumpPlacement",
+    "outputs": [
+      {
+        "file": "structure_cells.bin",
+        "to": "crates/mcrs_minecraft_worldgen_structure/tests/fixtures/vanilla"
+      },
+      {
+        "file": "structure_sites.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "structure_layouts",
+    "task": "dumpJigsaw",
+    "outputs": [
+      {
+        "file": "structure_layouts.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "template_placement",
+    "task": "dumpTemplatePlacement",
+    "outputs": [
+      {
+        "file": "template_placement.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "beard",
+    "task": "dumpBeard",
+    "outputs": [
+      {
+        "file": "beard.bin",
+        "to": "crates/mcrs_minecraft_worldgen/tests/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "registry_census",
+    "task": "dumpRegistryCensus",
+    "outputs": [
+      {
+        "file": "registry_census.bin",
+        "to": "crates/mcrs_minecraft_world/src/entity/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "structure_pieces",
+    "task": "dumpStructurePieces",
+    "outputs": [
+      {
+        "file": "structure_pieces.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "structure_geometry",
+    "task": "dumpStructureGeometry",
+    "outputs": [
+      {
+        "file": "structure_geometry.bin",
+        "to": "crates/mcrs_minecraft_worldgen_generator/src/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "vanilla_chunk",
+    "task": "dumpChunks",
+    "outputs": [
+      {
+        "file": "chunk_full.nbt",
+        "to": "crates/mcrs_minecraft_anvil/src/fixtures/vanilla"
+      },
+      {
+        "file": "chunk_terrain.nbt",
+        "to": "crates/mcrs_minecraft_anvil/src/fixtures/vanilla"
+      },
+      {
+        "file": "chunk_retrogen.nbt",
+        "to": "crates/mcrs_minecraft_anvil/src/fixtures/vanilla"
+      },
+      {
+        "file": "chunk_retrogen_minimal.nbt",
+        "to": "crates/mcrs_minecraft_anvil/src/fixtures/vanilla"
+      }
+    ]
+  },
+  {
+    "name": "snbt",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "snbt.json",
+        "to": "crates/mcrs_minecraft_nbt/src/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "hash_ops",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "hash_ops.json",
+        "to": "crates/mcrs_minecraft_item/src/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "text_vanilla",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "vanilla.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/text"
+      }
+    ]
+  },
+  {
+    "name": "text_probe",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "probe.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/text"
+      }
+    ]
+  },
+  {
+    "name": "text_nbt",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "nbt.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/text"
+      }
+    ]
+  },
+  {
+    "name": "text_wire",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "wire.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/text"
+      }
+    ]
+  },
+  {
+    "name": "item_plain",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "plain_golden.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_nested",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "nested_golden.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_predicate",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "predicate_vanilla.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_kinds",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "kinds.json",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_holders",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "holders_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_registry_refs",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "registry_refs_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "item_records",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "vanilla_records.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures/item"
+      }
+    ]
+  },
+  {
+    "name": "recipe_packets",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "recipe_packets_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "particles",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "particles_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "inventory_packets",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "inventory_packets_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "join_packets",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "join_packets_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "serverbound_game_packets",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "serverbound_game_packets_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "frames",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "frames_golden.txt",
+        "to": "crates/mcrs_minecraft_protocol/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "vanilla_player",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "vanilla_player.dat",
+        "to": "crates/mcrs_minecraft_world/tests/fixtures"
+      }
+    ]
+  },
+  {
+    "name": "registry_values",
+    "task": "dumpGolden",
+    "outputs": [
+      {
+        "file": "registry_values.txt",
+        "to": "crates/mcrs_minecraft_world/tests/fixtures"
+      }
+    ]
+  }
+]

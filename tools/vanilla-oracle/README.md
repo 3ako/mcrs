@@ -31,11 +31,10 @@ cargo run -p mcrs_minecraft_update -- recapture density
 cargo run -p mcrs_minecraft_update -- recapture --all
 ```
 
-The fixture names are the ones in the table of
-`crates/mcrs_minecraft_update/src/fixtures.rs`; each section below names its
-own. A task can still be run by hand with `-PoracleOut=<directory>`, for
-instance to compare a dump with the one in the repository, but then nothing
-copies the files or updates the manifest.
+The fixture names are the ones in the table `tools/fixtures.json`; each
+section below names its own. A task can still be run by hand with
+`-PoracleOut=<directory>`, for instance to compare a dump with the one in the
+repository, but then nothing copies the files or updates the manifest.
 
 Gradle is run with `--console=plain --no-daemon`. Never run two Gradle
 invocations against this project at once. First run downloads the Minecraft jar
