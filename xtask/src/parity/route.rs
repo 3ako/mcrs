@@ -56,18 +56,20 @@ impl Routes {
                 "{entry} lists an output with neither a file nor a pattern"
             ));
         }
+        self.directories.insert(to.clone());
         if let Some(file) = &output.file {
             self.named.insert(join(&to, file));
             let last = to.rsplit('/').next().unwrap_or_default();
             self.endings.push(format!("{last}/{file}"));
         }
         if let Some(pattern) = &output.pattern {
-            self.directories.insert(to.clone());
             self.patterns.push((to, pattern.clone()));
         }
         Ok(())
     }
 
+    // chisle: each literal is judged alone, so a path joined from segments that each stop above a
+    // destination directory still passes; resolving a `join` chain or `concat!` as one path lifts it.
     fn names_a_fixture(&self, literal: &str, resolved_against: &[&str]) -> bool {
         let tail = join("", literal);
         if tail.is_empty() {

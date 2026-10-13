@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn parity_refuses_every_route_to_a_fixture_but_the_loader() {
-        let rows: [(&str, &str, bool); 18] = [
+        let rows: [(&str, &str, bool); 19] = [
             (
                 "crates/demo/tests/it/embed.rs",
                 "const A: &[u8] = include_bytes!(\"../fixtures/demo.bin\");\n",
@@ -321,7 +321,12 @@ mod tests {
             (
                 "crates/demo/tests/it/directory_alone.rs",
                 "const P: &str = \"tests/fixtures\";\n",
-                false,
+                true,
+            ),
+            (
+                "crates/demo/tests/it/split_join.rs",
+                "fn p() -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"tests/fixtures\").join(\"demo.bin\")\n}\n",
+                true,
             ),
             (
                 "crates/mcrs_minecraft_fixtures/src/owner.rs",
