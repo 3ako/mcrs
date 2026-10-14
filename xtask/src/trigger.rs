@@ -90,9 +90,7 @@ impl Trigger {
             Trigger::Commit => {
                 "before a commit: change size, gate configuration, mutation markers, mutation floors, fixture parity, unused dependencies, mutation configuration, formatting, clippy"
             }
-            Trigger::Push => {
-                "before a push: every check that ci runs, then the mutants in changed code"
-            }
+            Trigger::Push => "before a push: every check that ci runs",
             Trigger::Ci => "on every pull request and every push to main: all checks",
             Trigger::Full => "the whole test suite, exhaustive sweeps included",
             Trigger::Gpu => "the tests that need a Metal GPU",
@@ -100,7 +98,7 @@ impl Trigger {
                 "in CI from the default branch: the git-only checks on a pull request head read as git data"
             }
             Trigger::Mutation => {
-                "after the mutation shards of a pull request: the surviving mutants in changed code"
+                "by hand only, never in a hook or in CI: the surviving mutants in changed code, from shards run beforehand"
             }
         }
     }
@@ -116,7 +114,7 @@ impl Trigger {
 
     #[cfg(test)]
     pub const fn runs_on_every_pull_request(self) -> bool {
-        matches!(self, Trigger::Ci | Trigger::Policy | Trigger::Mutation)
+        matches!(self, Trigger::Ci | Trigger::Policy)
     }
 
     pub fn parse(name: &str) -> Option<Trigger> {
@@ -153,7 +151,6 @@ pub const fn checks(trigger: Trigger) -> &'static [Check] {
             NoBevy,
             Wasm32,
             ExportedBuild,
-            Mutation,
         ],
         Trigger::Ci => &[
             Size,
@@ -258,7 +255,7 @@ mod tests {
             .into_iter()
             .filter(|t| t.runs_on_every_pull_request())
             .collect();
-        assert_eq!(every, [Trigger::Ci, Trigger::Policy, Trigger::Mutation]);
+        assert_eq!(every, [Trigger::Ci, Trigger::Policy]);
     }
 
     #[test]
@@ -266,7 +263,6 @@ mod tests {
         fn table(trigger: Trigger) -> &'static [Check] {
             match trigger {
                 Trigger::Ci => &[Check::Test, Check::Fmt],
-                Trigger::Mutation => &[Check::Mutation],
                 Trigger::Push => &[Check::Mutation, Check::Fmt, Check::Test],
                 Trigger::Commit => &[Check::Fmt, Check::Wasm32],
                 _ => &[Check::Fmt],
@@ -274,15 +270,19 @@ mod tests {
         }
         assert_eq!(
             outside_pull_requests(table),
-            [(Trigger::Commit, Check::Wasm32)]
+            [
+                (Trigger::Commit, Check::Wasm32),
+                (Trigger::Push, Check::Mutation)
+            ]
         );
     }
 
     #[test]
-    fn the_mutation_check_is_the_last_of_the_push_trigger_and_alone_in_its_own() {
-        assert_eq!(checks(Trigger::Push).last(), Some(&Check::Mutation));
+    fn mutants_run_only_from_the_mutation_trigger_which_no_hook_and_no_pull_request_runs() {
         assert_eq!(checks(Trigger::Mutation), [Check::Mutation]);
-        for trigger in [Trigger::Edit, Trigger::Commit, Trigger::Ci, Trigger::Policy] {
+        assert!(!Trigger::Mutation.is_local());
+        assert!(!Trigger::Mutation.runs_on_every_pull_request());
+        for trigger in Trigger::ALL.into_iter().filter(|&t| t != Trigger::Mutation) {
             assert!(!checks(trigger).contains(&Check::Mutation), "{trigger:?}");
         }
     }
