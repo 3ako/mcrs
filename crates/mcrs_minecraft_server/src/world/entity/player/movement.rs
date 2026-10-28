@@ -147,12 +147,13 @@ pub struct PlayerMovement {
     look: Option<Rotation>,
 }
 
+pub(crate) const MAX_XZ: f64 = 30_000_000.0;
+pub(crate) const MAX_Y: f64 = 20_000_000.0;
+
 pub(crate) fn process_movement(
     mut reader: MessageReader<PlayerMovement>,
     mut query: Query<(Mut<TeleportState>, Mut<Transform>)>,
 ) {
-    const MAX_XZ: f64 = 30_000_000.0;
-    const MAX_Y: f64 = 20_000_000.0;
     const MAX_POS: DVec3 = DVec3::new(MAX_XZ, MAX_Y, MAX_XZ);
     const MIN_POS: DVec3 = DVec3::new(-MAX_XZ, -MAX_Y, -MAX_XZ);
 
@@ -170,7 +171,7 @@ pub(crate) fn process_movement(
     })
 }
 
-fn teleport(
+pub(crate) fn teleport(
     mut clients: Query<
         (&HostAnchor, &mut TeleportState, &Transform),
         (Changed<Transform>, With<HostAnchor>),

@@ -14,10 +14,7 @@ use mcrs_minecraft_level::entity::physics::Transform;
 use mcrs_minecraft_level::session::{Owner, PlayerSession};
 use mcrs_minecraft_level::world::in_flight::MoveIds;
 use mcrs_minecraft_network::event::Received;
-use mcrs_minecraft_protocol::Look;
 use mcrs_minecraft_protocol::Text;
-use mcrs_minecraft_protocol::VarInt;
-use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundPlayerPosition;
 use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundSystemChatPacket;
 use mcrs_minecraft_protocol::packets::game::serverbound::{
     ServerboundChat, ServerboundChatCommand,
@@ -25,6 +22,7 @@ use mcrs_minecraft_protocol::packets::game::serverbound::{
 use mcrs_minecraft_protocol::setting::ChatMode;
 
 use crate::client_info::ClientInfo;
+use crate::world::entity::player::movement::{MAX_XZ, MAX_Y};
 use mcrs_minecraft_dimension::Dimension;
 use mcrs_minecraft_protocol::text::{Color, IntoText};
 use mcrs_minecraft_worldgen_generator::stages::FillContext;
@@ -81,20 +79,37 @@ fn handle_command(
                 return;
             };
             let host = host_anchor.0;
-            transform.translation = pos;
-            packet_writer.write(
-                to(
+            if !pos.is_finite() {
+                packet_writer.write(to(
                     host,
-                    PacketPayload::PlayerPosition(ClientboundPlayerPosition {
-                        teleport_id: VarInt(1),
-                        position: pos,
-                        velocity: DVec3::ZERO,
-                        look: Look::default(),
-                        flags: mcrs_minecraft_protocol::PositionFlags::default(),
+                    PacketPayload::SystemChat(ClientboundSystemChatPacket {
+                        content: Text::translate("parsing.double.expected", vec![])
+                            .color(Color::RED),
+                        overlay: false,
                     }),
-                )
-                .critical(),
-            );
+                ));
+                return;
+            }
+
+            if pos.x < -MAX_XZ
+                || pos.x >= MAX_XZ
+                || pos.y < -MAX_Y
+                || pos.y >= MAX_Y
+                || pos.z < -MAX_XZ
+                || pos.z >= MAX_XZ
+            {
+                packet_writer.write(to(
+                    host,
+                    PacketPayload::SystemChat(ClientboundSystemChatPacket {
+                        content: Text::translate("commands.teleport.invalidPosition", vec![])
+                            .color(Color::RED),
+                        overlay: false,
+                    }),
+                ));
+                return;
+            }
+
+            transform.translation = pos;
             packet_writer.write(to(
                 host,
                 PacketPayload::SystemChat(ClientboundSystemChatPacket {
@@ -290,4 +305,105 @@ fn is_chat_message_illegal(msg: &str) -> bool {
 #[inline]
 fn is_allowed_chat_character(ch: char) -> bool {
     !matches!(ch, '\0'..='\x1f' | '\x7f' | '§')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::entity::player::movement::{TeleportState, teleport};
+    use bevy_ecs::message::Messages;
+    use bevy_ecs::system::RunSystemOnce;
+    use mcrs_minecraft_level::session::PlayerSession;
+    use mcrs_minecraft_network::Instant;
+    use mcrs_minecraft_protocol::Encode;
+    use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundPlayerPosition;
+
+    fn world_with_player() -> (World, Entity) {
+        let mut world = World::new();
+        world.init_resource::<Messages<OutboundPlayerPacket>>();
+        world.insert_resource(mcrs_minecraft_level::world::channels::FromDimSender(
+            flume::unbounded::<mcrs_minecraft_engine::channel_types::FromDim>().0,
+        ));
+        world.insert_resource(MoveIds::new(Entity::PLACEHOLDER));
+        world.add_observer(handle_command);
+        let anchor = world.spawn_empty().id();
+        let player = world
+            .spawn((
+                HostAnchor(anchor),
+                Transform::default(),
+                GameProfile {
+                    id: Default::default(),
+                    username: "tester".into(),
+                    properties: vec![],
+                },
+                Owner(PlayerSession(1)),
+                TeleportState::default(),
+            ))
+            .id();
+        (world, player)
+    }
+
+    fn run_command(world: &mut World, player: Entity, command: &str) -> Vec<PacketPayload> {
+        let mut body = Vec::new();
+        ServerboundChatCommand {
+            command: mcrs_minecraft_protocol::Bounded(command),
+        }
+        .encode(&mut body)
+        .unwrap();
+        world.trigger(Received::<ServerboundChatCommand<'static>>::new(
+            player,
+            body.into(),
+            Instant::now(),
+        ));
+        world.flush();
+        world.run_system_once(teleport).unwrap();
+        world
+            .resource_mut::<Messages<OutboundPlayerPacket>>()
+            .drain()
+            .map(|packet| packet.data)
+            .collect()
+    }
+
+    fn positions(sent: &[PacketPayload]) -> Vec<&ClientboundPlayerPosition> {
+        sent.iter()
+            .filter_map(|payload| match payload {
+                PacketPayload::PlayerPosition(position) => Some(position),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tp_to_a_non_finite_or_out_of_world_position_leaves_the_player_in_place() {
+        for command in [
+            "tp NaN 0 0",
+            "tp inf 0 0",
+            "tp 0 -inf 0",
+            "tp 30000000 0 0",
+            "tp 0 20000000 0",
+            "tp 0 0 -30000000.5",
+        ] {
+            let (mut world, player) = world_with_player();
+            let sent = run_command(&mut world, player, command);
+            assert!(positions(&sent).is_empty(), "{command}");
+            assert_eq!(sent.len(), 1, "{command}: one error message");
+            assert_eq!(
+                world.get::<Transform>(player).unwrap().translation,
+                DVec3::ZERO,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn tp_sends_one_position_with_the_next_teleport_id() {
+        let (mut world, player) = world_with_player();
+        let sent = run_command(&mut world, player, "tp 0 100 0");
+        let positions = positions(&sent);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].teleport_id.0, 0);
+        assert_eq!(positions[0].position, DVec3::new(0.0, 100.0, 0.0));
+        let state = world.get::<TeleportState>(player).unwrap();
+        assert_eq!(state.teleport_id_counter(), 1);
+    }
 }
