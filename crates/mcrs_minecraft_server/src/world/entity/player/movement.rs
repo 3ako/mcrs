@@ -161,6 +161,9 @@ pub(crate) fn process_movement(
         let Ok((mut state, mut transform)) = query.get_mut(m.entity) else {
             return;
         };
+        if *transform != state.synced_transform {
+            return;
+        }
         if let Some(p) = m.position {
             transform.set_if_neq(transform.with_translation(p.clamp(MIN_POS, MAX_POS)));
         }
@@ -276,5 +279,48 @@ mod tests {
             (state.pending_teleports(), state.teleport_id_counter()),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn movement_queued_before_a_server_move_does_not_cancel_it() {
+        let mut world = World::new();
+        world.init_resource::<Messages<OutboundPlayerPacket>>();
+        world.init_resource::<Messages<PlayerMovement>>();
+        let anchor = world.spawn_empty().id();
+        let player = world
+            .spawn((
+                HostAnchor(anchor),
+                Transform::default(),
+                TeleportState::default(),
+            ))
+            .id();
+
+        let target = DVec3::new(0.0, 100.0, 0.0);
+        world.get_mut::<Transform>(player).unwrap().translation = target;
+        let mut movements = world.resource_mut::<Messages<PlayerMovement>>();
+        movements.write(PlayerMovement {
+            entity: player,
+            position: Some(DVec3::new(5.0, 0.0, 5.0)),
+            look: None,
+        });
+        movements.write(PlayerMovement {
+            entity: player,
+            position: None,
+            look: None,
+        });
+
+        world.run_system_once(process_movement).unwrap();
+        world.run_system_once(teleport).unwrap();
+
+        let sent: Vec<_> = world
+            .resource_mut::<Messages<OutboundPlayerPacket>>()
+            .drain()
+            .collect();
+        assert_eq!(sent.len(), 1, "the server move is sent once");
+        let PacketPayload::PlayerPosition(position) = &sent[0].data else {
+            panic!("a move is sent as a player position");
+        };
+        assert_eq!(position.position, target);
+        assert_eq!(world.get::<Transform>(player).unwrap().translation, target);
     }
 }
