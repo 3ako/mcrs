@@ -38,6 +38,7 @@ fn server(max_players: u32, motd: &str, players: Vec<(Uuid, String)>) -> (App, S
         announce_on_lan: false,
         max_players,
         motd: motd.to_owned(),
+        ..Default::default()
     });
     app.world()
         .resource::<StatusPublisher>()

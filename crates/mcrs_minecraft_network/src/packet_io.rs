@@ -113,6 +113,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> PacketIo<S> {
         }
     }
 
+    /// Waits for the peer to close after the write side shuts down. Dropping the stream
+    /// at once can lose the last packet: TCP resets a socket with unread input, and a
+    /// WebTransport session abandons unsent stream data when it closes.
+    pub async fn close(mut self) -> io::Result<()> {
+        self.stream.shutdown().await?;
+        let mut scratch = [0; READ_BUF_SIZE];
+        while self.stream.read(&mut scratch).await? != 0 {}
+        Ok(())
+    }
+
     pub async fn send_packet<P>(&mut self, pkt: &P) -> anyhow::Result<()>
     where
         P: Packet + Encode,

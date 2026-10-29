@@ -11,3 +11,7 @@ It differs from the game on purpose:
 - The game announces only a singleplayer world that was opened to LAN. A dedicated MCRS server announces itself by default.
 - The game stops announcing for good after one failed send. This server keeps trying on every interval, and logs once when sending starts to fail and once when it recovers.
 - A MOTD that the client's parser cannot read, one that contains `[/MOTD]`, is not sent. The reason is logged once. The datagram length is not checked: the MOTD is a constant far below the 1024 bytes the client reads.
+
+## Transfers
+
+A client that a transfer packet sends to the server opens its connection with the transfer intent. The server plugin's `accepts_transfers` lets such a connection log in as a direct one, with the same version check. When it is off, which is the default, the client gets `multiplayer.disconnect.transfers_disabled`. The `mcrs` server binary turns it on from `MCRS_ACCEPT_TRANSFERS` (`on`, `1`, `true` or `yes` in any case).
