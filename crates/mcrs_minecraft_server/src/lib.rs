@@ -10,6 +10,7 @@ pub mod configuration;
 mod keep_alive;
 pub mod login;
 pub mod ops;
+mod status;
 pub mod world;
 pub mod world_options;
 
@@ -18,6 +19,7 @@ use crate::client_info::ClientInfoPlugin;
 use crate::configuration::ConfigurationStatePlugin;
 use crate::keep_alive::KeepAlivePlugin;
 use crate::login::{LoginPlugin, SingleplayerProfile};
+use crate::status::StatusPlugin;
 use crate::world::WorldPlugin;
 pub use crate::world::generate::WorldGenPlugin;
 use bevy_app::{App, AppExit, Plugin, PluginGroup, PluginGroupBuilder};
@@ -284,6 +286,8 @@ pub struct ServerNetworkPlugin {
     pub offer_known_packs: bool,
     pub compression_threshold: NetworkCompressionThreshold,
     pub singleplayer_profile: Option<SingleplayerProfile>,
+    pub max_players: u32,
+    pub motd: String,
 }
 
 impl Default for ServerNetworkPlugin {
@@ -294,6 +298,8 @@ impl Default for ServerNetworkPlugin {
             offer_known_packs: true,
             compression_threshold: NetworkCompressionThreshold::default(),
             singleplayer_profile: None,
+            max_players: 20,
+            motd: "mcrs Server".to_owned(),
         }
     }
 }
@@ -308,11 +314,14 @@ impl Plugin for ServerNetworkPlugin {
         app.add_plugins(NetworkPlugin {
             address: self.bind_address,
             announce_on_lan: self.announce_on_lan,
+            max_players: self.max_players,
+            motd: self.motd.clone(),
         });
         app.insert_resource(self.compression_threshold);
         app.add_plugins(LoginPlugin);
         app.add_plugins(ConfigurationStatePlugin);
         app.add_plugins(KeepAlivePlugin);
         app.add_plugins(ClientInfoPlugin);
+        app.add_plugins(StatusPlugin);
     }
 }

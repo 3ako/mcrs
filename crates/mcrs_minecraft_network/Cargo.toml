@@ -12,6 +12,8 @@ doctest = false
 workspace = true
 
 [dependencies]
+rand.workspace = true
+serde.workspace = true
 mcrs_minecraft_registries.workspace = true
 mcrs_minecraft_dimension.workspace = true
 anyhow.workspace = true

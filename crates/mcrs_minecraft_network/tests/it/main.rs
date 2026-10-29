@@ -3,5 +3,6 @@
 // file under tests/ would be a separate crate and a separate link.
 mod accept_rate;
 mod pre_game_ingest;
+mod status;
 mod version_check;
 mod webtransport_session;
