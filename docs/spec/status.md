@@ -183,14 +183,14 @@ times were 30.002 s, 30.002 s and 50.007 s.
 
 ### STATUS-SEQ-005: Protocol version of the handshake
 
-- **Behavior:** the server answers a status exchange for every protocol version
-  in the handshake. It does not compare the client version with its own version.
-- **Behavior:** the response document is the same for every protocol version in
-  the handshake. `version.protocol` is the version of the server, not the
-  version of the client.
+- **Behavior:** for the protocol versions `5` and `1073742166` in the
+  handshake, the server answers the status exchange.
+- **Behavior:** for both versions, the response document is the same.
+  `version.protocol` is the version of the server, not the version of the
+  client.
 
-Provenance: `black_box_confirmed` (E7). Confidence: high. E7 used the protocol
-version `5`.
+Provenance: `black_box_confirmed` (E1, E7). Confidence: high for these two
+versions. No experiment used other versions (section 6).
 
 ## 3. Response document
 
@@ -352,7 +352,9 @@ Provenance: `black_box_confirmed` (E17). Confidence: high.
 
 ## 5. Conformance checks
 
-A server conforms to this document when a probe gets these results:
+These checks cover only a part of this document. A server that passes them
+can break a rule that no check tests, for example STATUS-SEQ-005 or
+STATUS-JSON-006.
 
 | Check | Rules |
 |-------|-------|
@@ -362,7 +364,7 @@ A server conforms to this document when a probe gets these results:
 | E6 closes at 30 s and at 50 s | STATUS-SEQ-004 |
 | E10 gives a document without `description` | STATUS-JSON-002 |
 | E11 gives a sample of 12 entries with 15 online players | STATUS-JSON-004 |
-| In E12, the missing players are always 3 adjacent players of the join order, without a wrap | STATUS-JSON-004 |
+| In E12, the missing players are the players before position `s` and after position `s + 11`, with `s` from 0 to 3: `{12, 13, 14}`, `{0, 13, 14}`, `{0, 1, 14}` or `{0, 1, 2}` | STATUS-JSON-004 |
 | E16 gives a document without `players.sample` | STATUS-CFG-003 |
 | E17 gives a close without a packet | STATUS-CFG-004 |
 
@@ -381,6 +383,8 @@ the types and the values must agree.
 - **Unknown packet.** No experiment sent a packet id other than `0x00` or
   `0x01`, or a packet with extra bytes.
 - **Long text.** No experiment measured a limit on the length of `motd`.
+- **Other protocol versions.** E7 used only the version `5`. Proposed
+  experiment: repeat E7 with `0`, a negative version and `1073742167`.
 - **Join order after a leave.** No experiment made a player leave from the
   middle of the join order and then read the sample.
 
@@ -388,13 +392,15 @@ the types and the values must agree.
 
 ### 7.1 Server setup
 
-1. Get the dedicated server jar of `26.4-snapshot-4`. The package descriptor
-   is the `json` entry of `crates/mcrs_minecraft_client_jar/src/release.json`.
-   The jar is its `downloads.server` entry.
-2. Verify the SHA-1 and the size of the jar against the descriptor.
-3. Write `eula=true` in `eula.txt`. Do this only when you accept the Minecraft
+1. Get the package descriptor of `26.4-snapshot-4` from the `url` of the
+   `json` entry of `crates/mcrs_minecraft_client_jar/src/release.json`.
+2. Verify the SHA-1 of the descriptor against the `sha1` of that entry.
+3. Get the dedicated server jar from the `url` of the `downloads.server` entry
+   of the descriptor.
+4. Verify the SHA-1 and the size of the jar against the same entry.
+5. Write `eula=true` in `eula.txt`. Do this only when you accept the Minecraft
    EULA.
-4. Write `server.properties` with these lines:
+6. Write `server.properties` with these lines:
 
    ```properties
    online-mode=false
@@ -407,17 +413,17 @@ the types and the values must agree.
    white-list=false
    ```
 
-5. Add the lines of the experiment to `server.properties`.
-6. Start the server with Java 25 or later: `java -Xmx2G -jar server.jar nogui`.
+7. Add the lines of the experiment to `server.properties`.
+8. Start the server with Java 25 or later: `java -Xmx2G -jar server.jar nogui`.
    Keep its standard input open. A server with a closed standard input does not
    read console commands.
-7. Wait for the log line `Done`.
-8. Before you change `server.properties`, send `stop` to the console. Then
-   start the server again.
+9. Wait for the log line `Done`.
+10. Before you change `server.properties`, send `stop` to the console. Then
+    start the server again.
 
 The default `server.properties` of this version has `white-list=true`. With
 that value, the server disconnects each player that joins with the reason
-`You are not white-listed on this server!`. Step 4 sets it to `false`.
+`You are not white-listed on this server!`. Step 6 sets it to `false`.
 
 ### 7.2 The probe
 
