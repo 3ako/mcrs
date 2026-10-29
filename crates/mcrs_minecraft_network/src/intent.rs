@@ -11,6 +11,8 @@ use mcrs_minecraft_protocol::uuid::Uuid;
 use mcrs_minecraft_protocol::{Bounded, Text};
 use rand::seq::SliceRandom;
 use serde::Serialize;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::debug;
 
 /// The game calls a client older than protocol 754 outdated, and names its own version in
@@ -50,6 +52,19 @@ struct Players {
     online: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     sample: Vec<Sample>,
+}
+
+const REFUSAL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+async fn refuse_login<S: ByteStream>(mut io: PacketIo<S>, reason: &Text) -> anyhow::Result<()> {
+    let reason = serde_json::to_string(reason)?;
+    io.send_packet(&ClientboundLoginDisconnect {
+        reason: Bounded(&reason),
+    })
+    .await?;
+    // A client that never closes only costs the timeout; the reason is already sent.
+    let _ = timeout(REFUSAL_CLOSE_TIMEOUT, io.close()).await;
+    Ok(())
 }
 
 pub(crate) async fn handle_intent<S: ByteStream>(
@@ -111,14 +126,13 @@ pub(crate) async fn handle_intent<S: ByteStream>(
                 .await?;
             }
         }
-        Intent::Login => {
+        Intent::Transfer if !shared.0.accepts_transfers => {
+            let reason = Text::translate("multiplayer.disconnect.transfers_disabled", vec![]);
+            refuse_login(io, &reason).await?;
+        }
+        Intent::Login | Intent::Transfer => {
             let Some(switch_mode) = SwitchMode::of(protocol_version) else {
-                let reason = serde_json::to_string(&unsupported_version_reason(protocol_version))?;
-                io.send_packet(&ClientboundLoginDisconnect {
-                    reason: Bounded(&reason),
-                })
-                .await?;
-                return Ok(());
+                return refuse_login(io, &unsupported_version_reason(protocol_version)).await;
             };
             let raw_connection = io.into_raw_connection(remote_addr, switch_mode);
             shared
@@ -127,7 +141,6 @@ pub(crate) async fn handle_intent<S: ByteStream>(
                 .send(Box::new(raw_connection))
                 .await?;
         }
-        Intent::Transfer => {}
     }
     Ok(())
 }

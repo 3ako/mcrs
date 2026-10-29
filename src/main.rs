@@ -62,6 +62,8 @@ async fn main() -> AppExit {
             compression_threshold: compression_threshold(
                 variable("MCRS_COMPRESSION_THRESHOLD").as_deref(),
             ),
+            accepts_transfers: variable("MCRS_ACCEPT_TRANSFERS")
+                .is_some_and(|value| on_off("MCRS_ACCEPT_TRANSFERS", Some(&value))),
             ..Default::default()
         },
         ..Default::default()

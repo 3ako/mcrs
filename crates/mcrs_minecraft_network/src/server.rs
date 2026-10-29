@@ -26,6 +26,9 @@ pub struct NetworkPlugin {
     pub announce_on_lan: bool,
     pub max_players: u32,
     pub motd: String,
+    /// A handshake with the transfer intent continues as a login only when this is set;
+    /// otherwise the client gets `multiplayer.disconnect.transfers_disabled`.
+    pub accepts_transfers: bool,
 }
 
 impl Default for NetworkPlugin {
@@ -35,6 +38,7 @@ impl Default for NetworkPlugin {
             announce_on_lan: true,
             max_players: 20,
             motd: "mcrs Server".to_owned(),
+            accepts_transfers: false,
         }
     }
 }
@@ -79,26 +83,16 @@ impl WebTransportEndpoint {
 
 impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
-        if let Err(error) = build_plugin(
-            app,
-            self.address,
-            self.announce_on_lan,
-            self.max_players,
-            self.motd.clone(),
-        ) {
+        if let Err(error) = build_plugin(app, self) {
             tracing::error!("the network did not start: {error:#}");
             app.world_mut().write_message(AppExit::error());
         }
     }
 }
 
-fn build_plugin(
-    app: &mut App,
-    address: SocketAddr,
-    announce_on_lan: bool,
-    max_players: u32,
-    motd: String,
-) -> anyhow::Result<()> {
+fn build_plugin(app: &mut App, plugin: &NetworkPlugin) -> anyhow::Result<()> {
+    let address = plugin.address;
+    let announce_on_lan = plugin.announce_on_lan;
     let runtime = Runtime::new()?;
     let tokio_handle = runtime.handle().clone();
 
@@ -119,9 +113,10 @@ fn build_plugin(
         tokio_handle,
         tokio_runtime: Some(runtime),
         new_connections_send: new_sessions_send,
-        max_players,
+        max_players: plugin.max_players,
         status_recv,
-        motd,
+        motd: plugin.motd.clone(),
+        accepts_transfers: plugin.accepts_transfers,
     }));
 
     app.insert_resource(shared_state.clone());
@@ -214,6 +209,7 @@ pub(crate) struct SharedNetworkStateInner {
     pub(crate) max_players: u32,
     pub(crate) status_recv: tokio::sync::watch::Receiver<StatusPlayers>,
     pub(crate) motd: String,
+    pub(crate) accepts_transfers: bool,
 }
 
 #[derive(Component)]

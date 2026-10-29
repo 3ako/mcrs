@@ -291,6 +291,9 @@ pub struct ServerNetworkPlugin {
     pub singleplayer_profile: Option<SingleplayerProfile>,
     pub max_players: u32,
     pub motd: String,
+    /// Turned on, a client that a transfer packet sends here logs in; turned off, it gets
+    /// `multiplayer.disconnect.transfers_disabled`.
+    pub accepts_transfers: bool,
 }
 
 impl Default for ServerNetworkPlugin {
@@ -303,6 +306,7 @@ impl Default for ServerNetworkPlugin {
             singleplayer_profile: None,
             max_players: 20,
             motd: "mcrs Server".to_owned(),
+            accepts_transfers: false,
         }
     }
 }
@@ -319,6 +323,7 @@ impl Plugin for ServerNetworkPlugin {
             announce_on_lan: self.announce_on_lan,
             max_players: self.max_players,
             motd: self.motd.clone(),
+            accepts_transfers: self.accepts_transfers,
         });
         app.insert_resource(self.compression_threshold);
         app.add_plugins(LoginPlugin);
