@@ -6,10 +6,10 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::system::{IntoSystem, System};
 use bevy_ecs::world::World;
 use bytes::Bytes;
-use mcrs_minecraft_engine::bridge::bridge_inbound_to_channel;
+use mcrs_minecraft_engine::bridge::{bridge_inbound_to_channel, forward_pending_inbound};
 use mcrs_minecraft_engine::bus::InboundPlayerPacket;
 use mcrs_minecraft_engine::channel_types::{DimChannelsResource, FromDim, ToDim};
-use mcrs_minecraft_engine::session::{HostAnchorRef, SessionBundle};
+use mcrs_minecraft_engine::session::{HostAnchorRef, PendingInbound, SessionBundle};
 use mcrs_minecraft_level::session::{Place, PlayerSession, PlayerSessionCounter, SessionPlacement};
 use mcrs_minecraft_level::world::channels::{
     FROM_DIM_CAPACITY, TO_DIM_CAPACITY, TO_DIM_CONTROL_CAPACITY,
@@ -148,6 +148,51 @@ fn serverbound_full_disconnects_session() {
         TO_DIM_CAPACITY,
         "channel held exactly TO_DIM_CAPACITY messages"
     );
+}
+
+#[test]
+fn held_packets_on_a_full_channel_disconnect_session() {
+    let mut world = build_world();
+    let dim = world.spawn_empty().id();
+    let (srv_rx, _ctl_rx, _from_tx) = make_channels(&mut world, dim);
+    let conn = spawn_connection(&mut world);
+    let anchor = world.spawn_empty().id();
+    let in_dim = world.spawn_empty().id();
+    register_session(&mut world, conn, anchor, dim, Some(in_dim));
+
+    let packet = |id| InboundPlayerPacket {
+        player: anchor,
+        id,
+        data: Bytes::new(),
+        timestamp: std::time::Instant::now(),
+        trigger: None,
+    };
+    {
+        let channels = world.resource::<DimChannelsResource>();
+        let entry = channels.get(dim).expect("dim channel present");
+        for i in 0..TO_DIM_CAPACITY - 1 {
+            entry
+                .serverbound_sender
+                .try_send(ToDim::Serverbound(packet(i as i32)))
+                .expect("fill channel");
+        }
+    }
+    world
+        .get_mut::<PendingInbound>(anchor)
+        .unwrap()
+        .0
+        .extend([packet(0xA), packet(0xB)]);
+
+    let mut sys = IntoSystem::into_system(forward_pending_inbound);
+    sys.initialize(&mut world);
+    let _ = sys.run((), &mut world);
+    sys.apply_deferred(&mut world);
+
+    assert!(
+        world.get::<ServerSideConnection>(conn).is_none(),
+        "a held packet that finds the channel full disconnects the session"
+    );
+    assert_eq!(srv_rx.try_iter().count(), TO_DIM_CAPACITY);
 }
 
 fn transfer_snapshot() -> mcrs_minecraft_engine::bus::PlayerTransferSnapshot {
