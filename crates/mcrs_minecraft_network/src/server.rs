@@ -1,7 +1,7 @@
 use crate::inbound_rate::InboundRateBucket;
 use crate::metrics::Malformed;
 use crate::{ConnectionState, NetworkSet, RawConnection};
-use crate::{connect, event, intent, lan, webtransport};
+use crate::{connect, event, lan, webtransport};
 use bevy_app::{App, AppExit, FixedPreUpdate, Plugin, PostStartup};
 use bevy_ecs::prelude::Component;
 use bevy_ecs::resource::Resource;
@@ -10,6 +10,7 @@ use bevy_ecs::system::Res;
 use bevy_ecs::world::World;
 use mcrs_minecraft_protocol::packets::login::clientbound::ClientboundLoginDisconnect;
 use mcrs_minecraft_protocol::packets::{configuration, game};
+use mcrs_minecraft_protocol::uuid::Uuid;
 use mcrs_minecraft_protocol::{Bounded, Encode, Packet, Text, WritePacket};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -23,6 +24,8 @@ pub struct NetworkPlugin {
     pub address: SocketAddr,
     /// A listener beyond loopback announces itself on the local network.
     pub announce_on_lan: bool,
+    pub max_players: u32,
+    pub motd: String,
 }
 
 impl Default for NetworkPlugin {
@@ -30,6 +33,8 @@ impl Default for NetworkPlugin {
         Self {
             address: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 25565).into(),
             announce_on_lan: true,
+            max_players: 20,
+            motd: "mcrs Server".to_owned(),
         }
     }
 }
@@ -51,6 +56,18 @@ pub struct WebTransportEndpoint {
     pub certificate_hash: [u8; 32],
 }
 
+#[derive(Clone, Default)]
+pub struct StatusPlayers {
+    pub players: Vec<(Uuid, String)>,
+}
+
+#[derive(Resource)]
+pub struct StatusPublisher(tokio::sync::watch::Sender<StatusPlayers>);
+impl StatusPublisher {
+    pub fn publish(&self, players: StatusPlayers) {
+        self.0.send_replace(players);
+    }
+}
 impl WebTransportEndpoint {
     pub fn certificate_hash_hex(&self) -> String {
         self.certificate_hash
@@ -62,14 +79,26 @@ impl WebTransportEndpoint {
 
 impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
-        if let Err(error) = build_plugin(app, self.address, self.announce_on_lan) {
+        if let Err(error) = build_plugin(
+            app,
+            self.address,
+            self.announce_on_lan,
+            self.max_players,
+            self.motd.clone(),
+        ) {
             tracing::error!("the network did not start: {error:#}");
             app.world_mut().write_message(AppExit::error());
         }
     }
 }
 
-fn build_plugin(app: &mut App, address: SocketAddr, announce_on_lan: bool) -> anyhow::Result<()> {
+fn build_plugin(
+    app: &mut App,
+    address: SocketAddr,
+    announce_on_lan: bool,
+    max_players: u32,
+    motd: String,
+) -> anyhow::Result<()> {
     let runtime = Runtime::new()?;
     let tokio_handle = runtime.handle().clone();
 
@@ -84,15 +113,20 @@ fn build_plugin(app: &mut App, address: SocketAddr, announce_on_lan: bool) -> an
     };
 
     let (new_sessions_send, mut new_sessions_recv) = channel(128);
+    let (status_send, status_recv) = tokio::sync::watch::channel(StatusPlayers::default());
 
     let shared_state = SharedNetworkState(Arc::new(SharedNetworkStateInner {
         tokio_handle,
         tokio_runtime: Some(runtime),
         new_connections_send: new_sessions_send,
+        max_players,
+        status_recv,
+        motd,
     }));
 
     app.insert_resource(shared_state.clone());
     app.insert_resource(BoundAddress(bound));
+    app.insert_resource(StatusPublisher(status_send));
 
     let mut webtransport_endpoint = {
         let _guard = shared_state.0.tokio_handle.enter();
@@ -122,7 +156,7 @@ fn build_plugin(app: &mut App, address: SocketAddr, announce_on_lan: bool) -> an
                     lan::source_address(bound),
                     lan::GROUP.into(),
                     lan::INTERVAL,
-                    intent::MOTD,
+                    shared_state.0.motd.clone(),
                     port,
                     shared_state.0.new_connections_send.clone(),
                 );
@@ -177,6 +211,9 @@ pub(crate) struct SharedNetworkStateInner {
     )]
     tokio_runtime: Option<Runtime>,
     pub(crate) new_connections_send: Sender<Box<RawConnection>>,
+    pub(crate) max_players: u32,
+    pub(crate) status_recv: tokio::sync::watch::Receiver<StatusPlayers>,
+    pub(crate) motd: String,
 }
 
 #[derive(Component)]
