@@ -4,7 +4,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::Remove;
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::{Query, Resource, resource_changed};
-use bevy_ecs::query::Changed;
+use bevy_ecs::query::{Changed, With};
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use mcrs_minecraft_engine::session::GameProfile;
 use mcrs_minecraft_network::{ServerSideConnection, StatusPlayers, StatusPublisher};
@@ -51,11 +51,14 @@ fn on_disconnect_handle(
 }
 
 fn on_connection_state_change_handle(
-    query: Query<(Entity, &ConnectionState, &GameProfile), Changed<ConnectionState>>,
+    query: Query<
+        (Entity, &ConnectionState, &GameProfile),
+        (Changed<ConnectionState>, With<ServerSideConnection>),
+    >,
     mut players: ResMut<OnlinePlayers>,
 ) {
     for (entity, state, profile) in &query {
-        if *state == ConnectionState::Game {
+        if *state == ConnectionState::Game && !players.players.iter().any(|x| x.0 == entity) {
             players
                 .players
                 .push((entity, profile.id, profile.username.clone()));
