@@ -390,12 +390,18 @@ pub fn bridge_player_attach(
     }
 }
 
-/// Hands an attached session's held packets to its dimension.
+/// Hands an attached session's held packets to its dimension. A full serverbound
+/// channel disconnects the offending session.
 pub fn forward_pending_inbound(
-    mut sessions: Query<(&SessionPlacement, &mut PendingInbound)>,
+    mut sessions: Query<(
+        &SessionPlacement,
+        &mut PendingInbound,
+        Option<&SessionConnection>,
+    )>,
     dim_channels: Res<DimChannelsResource>,
+    mut commands: Commands,
 ) {
-    for (placement, mut pending) in &mut sessions {
+    for (placement, mut pending, connection) in &mut sessions {
         if pending.0.is_empty() {
             continue;
         }
@@ -407,7 +413,16 @@ pub fn forward_pending_inbound(
             continue;
         };
         for packet in pending.0.drain(..) {
-            let _ = chan.serverbound_sender.try_send(ToDim::Serverbound(packet));
+            if let Err(flume::TrySendError::Full(_)) =
+                chan.serverbound_sender.try_send(ToDim::Serverbound(packet))
+            {
+                if let Some(connection) = connection {
+                    commands
+                        .entity(connection.entity())
+                        .remove::<ServerSideConnection>();
+                }
+                break;
+            }
         }
     }
 }
