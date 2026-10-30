@@ -64,11 +64,11 @@ async fn announce(
     socket: UdpSocket,
     destination: SocketAddr,
     period: Duration,
-    motd: &'static str,
+    motd: String,
     port: u16,
     stopped: impl Future<Output = ()>,
 ) {
-    let Some(datagram) = announcement(motd, port) else {
+    let Some(datagram) = announcement(&motd, port) else {
         warn!(
             "LAN announcement not sent: the MOTD contains {MOTD_CLOSE}, so a vanilla client would drop it"
         );
@@ -103,7 +103,7 @@ pub(crate) fn start<T: Send + 'static>(
     source: SocketAddr,
     destination: SocketAddr,
     period: Duration,
-    motd: &'static str,
+    motd: String,
     port: u16,
     server: Sender<T>,
 ) -> std::io::Result<JoinHandle<()>> {
@@ -239,7 +239,7 @@ mod tests {
     const SILENCE: Duration = Duration::from_millis(100);
     const PERIOD: Duration = Duration::from_millis(500);
     const PORT: u16 = 25565;
-
+    const MOTD: &str = "mcrs Server! ;3";
     async fn loopback() -> UdpSocket {
         UdpSocket::bind("127.0.0.1:0").await.unwrap()
     }
@@ -276,9 +276,7 @@ mod tests {
     }
 
     fn expected() -> Vec<u8> {
-        announcement(crate::intent::MOTD, PORT)
-            .unwrap()
-            .into_bytes()
+        announcement(MOTD, PORT).unwrap().into_bytes()
     }
 
     #[test]
@@ -291,7 +289,7 @@ mod tests {
                 sender,
                 receiver.local_addr().unwrap(),
                 PERIOD,
-                crate::intent::MOTD,
+                MOTD.to_owned(),
                 PORT,
                 std::future::pending(),
             ));
@@ -322,7 +320,7 @@ mod tests {
                 loopback().await,
                 receiver.local_addr().unwrap(),
                 FAST,
-                crate::intent::MOTD,
+                MOTD.to_owned(),
                 PORT,
                 std::future::ready(()),
             ));
@@ -344,7 +342,7 @@ mod tests {
                     loopback().await,
                     receiver.local_addr().unwrap(),
                     FAST,
-                    "early[/MOTD]late",
+                    "early[/MOTD]late".to_owned(),
                     PORT,
                     std::future::pending(),
                 ),
@@ -364,7 +362,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 receiver.local_addr().unwrap(),
                 FAST,
-                crate::intent::MOTD,
+                MOTD.to_owned(),
                 PORT,
                 server,
             )
@@ -394,7 +392,7 @@ mod tests {
                 held.local_addr().unwrap(),
                 receiver.local_addr().unwrap(),
                 FAST,
-                crate::intent::MOTD,
+                MOTD.to_owned(),
                 PORT,
                 server,
             );

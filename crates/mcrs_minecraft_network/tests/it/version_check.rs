@@ -17,6 +17,7 @@ fn a_login_under_another_protocol_version_is_refused_with_the_reason_of_its_age(
     app.add_plugins(NetworkPlugin {
         address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into(),
         announce_on_lan: false,
+        ..Default::default()
     });
     let address = app.world().resource::<BoundAddress>().0;
     app.update();
@@ -60,6 +61,7 @@ fn a_login_under_26_3_the_own_version_or_26_4_snapshot_5_reaches_the_server() {
     app.add_plugins(NetworkPlugin {
         address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into(),
         announce_on_lan: false,
+        ..Default::default()
     });
     let address = app.world().resource::<BoundAddress>().0;
     app.update();
