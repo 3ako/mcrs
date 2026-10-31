@@ -7,7 +7,6 @@ use mcrs_minecraft_level::world::sub_app::{DimSpawnQueue, DimSpawnRequest, Dimen
 use tracing::{debug, info, warn};
 
 pub mod aoi;
-pub mod arrival;
 pub mod block_entity;
 pub mod block_update;
 pub mod chunk;
@@ -27,6 +26,7 @@ impl Plugin for WorldPlugin {
         // default is for harnesses that compose `WorldPlugin` on its own.
         app.init_resource::<crate::world_options::WorldSeed>();
         app.add_plugins(mcrs_minecraft_engine::EnginePlugin);
+        app.add_plugins(mcrs_minecraft_engine::clock::WorldClockHostPlugin);
         app.add_systems(OnEnter(AppState::Playing), enqueue_dim_spawns);
     }
 }

@@ -3,9 +3,7 @@ use bevy_app::{App, AppExit};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::With;
 use mcrs_minecraft_engine::bridge::OutboundFlush;
-use mcrs_minecraft_engine::dim::{
-    DimSubAppHandle, drain_dim_despawn_queue, expire_moves, pump_channels,
-};
+use mcrs_minecraft_engine::dim::{DimSubAppHandle, drain_dim_despawn_queue, pump_channels};
 use mcrs_minecraft_level::world::sub_app::DimAppLabel;
 use std::num::NonZeroU32;
 
@@ -18,14 +16,21 @@ pub fn run_server_loop(app: App) -> AppExit {
     mcrs_minecraft_level::server_loop::run_server_loop(
         app,
         DEFAULT_TPS,
-        |app| {
-            pump_channels(app);
-            expire_moves(app);
-            drain_dim_spawn_queue(app);
-            drain_dim_despawn_queue(app);
-        },
+        between_ticks,
         drain_columns,
     )
+}
+
+/// What the host does after each tick: it takes the dimensions' output, runs the commands
+/// it parsed, moves the players that changed dimension and spawns or despawns dimensions.
+pub fn between_ticks(app: &mut App) {
+    pump_channels(app);
+    mcrs_minecraft_command_engine::run_pending_commands::<
+        mcrs_minecraft_command_vanilla::VanillaCommands,
+    >(app);
+    crate::world::entity::player::dimension_change::apply_dimension_change_requests(app);
+    drain_dim_spawn_queue(app);
+    drain_dim_despawn_queue(app);
 }
 
 /// Passes on what landed since the tick: every dimension sends the columns whose sections

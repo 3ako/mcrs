@@ -1,30 +1,45 @@
+use mcrs_minecraft_engine::session::GameProfile;
 use std::sync::Arc;
 
 use bevy_app::{App, TaskPoolPlugin};
 use bevy_asset::AssetPlugin;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::message::Messages;
+use bevy_ecs::prelude::With;
+use bevy_ecs::world::World;
 use bevy_math::{DVec3, Vec2};
 use bevy_state::app::{AppExtStates, StatesPlugin};
 use bevy_state::prelude::NextState;
 use bevy_time::{Fixed, Time, TimePlugin};
+use bytes::Bytes;
 use mcrs_minecraft_assets::AppState;
 use mcrs_minecraft_block::definition::Blocks;
 use mcrs_minecraft_core::{ResourceKey, ResourceLocation};
 use mcrs_minecraft_dimension::Dimension;
+use mcrs_minecraft_engine::ability::{PlayerGameMode, PlayerOpLevel};
 use mcrs_minecraft_engine::bus::{
     InboundPlayerDespawn, InboundPlayerPacket, InboundPlayerSpawn, OutboundPlayerAttached,
-    OutboundPlayerDisconnect, OutboundPlayerPacket, PacketPayload, PlayerTransferSnapshot,
+    OutboundPlayerDisconnect, OutboundPlayerPacket, PacketPayload, PacketTarget,
+    PlayerTransferSnapshot,
 };
 use mcrs_minecraft_engine::channel_types::{DimChannelsResource, ToDim};
 use mcrs_minecraft_engine::dim::DimSubAppHandle;
 use mcrs_minecraft_engine::dim::pump_channels;
-use mcrs_minecraft_engine::session::SessionBundle;
+use mcrs_minecraft_engine::session::HostAnchor;
+use mcrs_minecraft_engine::session::{HostAnchorRef, SessionBundle, SessionConnection};
+use mcrs_minecraft_game_mode::GameMode;
+use mcrs_minecraft_level::entity::player::Player;
 use mcrs_minecraft_level::session::{Place, PlayerSession, PlayerSessionCounter, SessionPlacement};
-use mcrs_minecraft_level::world::sub_app::{DimDespawnQueue, DimSpawnQueue, DimSpawnRequest};
+use mcrs_minecraft_level::world::sub_app::{
+    DimAppLabel, DimDespawnQueue, DimSpawnQueue, DimSpawnRequest,
+};
 use mcrs_minecraft_light::block_light::{BlockLightRegistry, block_light_registry};
+use mcrs_minecraft_network::ConnectionState;
+use mcrs_minecraft_network::metrics::PacketDispatcher;
 use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundLogin;
 use mcrs_minecraft_protocol::uuid::Uuid;
+use mcrs_minecraft_protocol::{Encode, Packet};
+use mcrs_minecraft_server::ops::{DefaultOpLevel, OpList, OpListEntry};
 use mcrs_minecraft_server::world::sub_app_builder::drain_dim_spawn_queue;
 
 /// Build a host `App` wired for the production per-dim sub-app builder path.
@@ -159,7 +174,7 @@ pub fn join(
                 username: "joining".into(),
                 position: DVec3::new(0.0, 64.0, 0.0),
                 rotation: Vec2::ZERO,
-                view_distance: 12,
+                client_info: Some(crate::support::client_info_with_view_distance(12)),
             },
             dimensions,
         }))
@@ -177,4 +192,198 @@ pub fn join(
             _ => None,
         })
         .expect("a login is sent")
+}
+
+/// A host app in `Playing` with one overworld dimension, whose players join through the
+/// dimension's channels.
+pub struct PlayServer {
+    pub app: App,
+    pub dim: Entity,
+}
+
+impl PlayServer {
+    /// Finishes `app`, lists `ops` as `(uuid, level)` and gives every other player
+    /// `default_level`.
+    pub fn start(app: App, ops: &[(Uuid, u8)], default_level: u8) -> Self {
+        let overworld = [("minecraft:overworld", "minecraft:overworld")];
+        Self::start_in(app, &overworld, ops, default_level)
+    }
+
+    /// A server that runs `dimensions`; the first one is where `join` places a player.
+    pub fn start_in(
+        mut app: App,
+        dimensions: &[(&str, &str)],
+        ops: &[(Uuid, u8)],
+        default_level: u8,
+    ) -> Self {
+        app.finish();
+        app.init_resource::<PlayerSessionCounter>();
+        app.add_message::<InboundPlayerSpawn>();
+        app.insert_resource(OpList::new(ops.iter().map(|&(uuid, level)| OpListEntry {
+            uuid,
+            name: "op".into(),
+            level,
+            bypasses_player_limit: false,
+        })));
+        app.insert_resource(DefaultOpLevel(PlayerOpLevel(default_level)));
+        drive_to_playing(&mut app);
+        materialise_sub_apps(&mut app, dimensions);
+        let dim = label_of(&app, dimensions[0].0);
+        Self { app, dim }
+    }
+
+    pub fn world(&mut self) -> &mut World {
+        self.world_in(self.dim)
+    }
+
+    pub fn world_in(&mut self, dim: Entity) -> &mut World {
+        self.app.sub_app_mut(DimAppLabel(dim)).world_mut()
+    }
+
+    /// Runs `n` updates and returns the packets sent to `anchor` or to every player.
+    pub fn ticks(&mut self, anchor: Entity, n: usize) -> Vec<PacketPayload> {
+        self.ticks_all(n)
+            .into_iter()
+            .filter(|packet| match packet.target {
+                PacketTarget::SinglePlayer(target) => target == anchor,
+                PacketTarget::AllPlayers => true,
+                _ => false,
+            })
+            .map(|packet| packet.data)
+            .collect()
+    }
+
+    /// Runs `n` updates and returns every packet sent.
+    pub fn ticks_all(&mut self, n: usize) -> Vec<OutboundPlayerPacket> {
+        let mut packets = Vec::new();
+        for _ in 0..n {
+            self.app.update();
+            mcrs_minecraft_server::runner::between_ticks(&mut self.app);
+            packets.extend(
+                self.app
+                    .world_mut()
+                    .resource_mut::<Messages<OutboundPlayerPacket>>()
+                    .drain(),
+            );
+        }
+        packets
+    }
+
+    pub fn submit_to(&self, dim: Entity, message: ToDim) {
+        let channels = self
+            .app
+            .world()
+            .resource::<DimChannelsResource>()
+            .get(dim)
+            .unwrap();
+        let sender = match message {
+            ToDim::Serverbound(..) => &channels.serverbound_sender,
+            _ => &channels.control_sender,
+        };
+        sender.try_send(message).unwrap();
+    }
+
+    /// Returns the host anchor of the new player and the packets of its first ticks.
+    pub fn join(&mut self, uuid: Uuid, name: &str) -> (Entity, Vec<PacketPayload>) {
+        self.join_in(self.dim, uuid, name)
+    }
+
+    pub fn join_in(&mut self, dim: Entity, uuid: Uuid, name: &str) -> (Entity, Vec<PacketPayload>) {
+        let session = self
+            .app
+            .world_mut()
+            .resource_mut::<PlayerSessionCounter>()
+            .next();
+        let anchor = self
+            .app
+            .world_mut()
+            .spawn((
+                GameProfile {
+                    id: uuid,
+                    username: name.into(),
+                    properties: Vec::new(),
+                },
+                SessionBundle::placed(session, SessionPlacement::new(Place::Joining(dim), 0)),
+            ))
+            .id();
+        self.app.world_mut().spawn(HostAnchorRef(anchor));
+        self.submit_to(
+            dim,
+            ToDim::Spawn(InboundPlayerSpawn {
+                host_anchor: anchor,
+                session: PlayerSession(0),
+                snapshot: PlayerTransferSnapshot {
+                    uuid,
+                    username: name.into(),
+                    position: DVec3::new(8.5, 64.0, 8.5),
+                    rotation: Vec2::ZERO,
+                    client_info: Some(crate::support::client_info_with_view_distance(2)),
+                },
+                dimensions: Vec::new().into(),
+            }),
+        );
+        let packets = self.ticks(anchor, 3);
+        (anchor, packets)
+    }
+
+    /// Raises `packet` from `anchor` on its connection in the host, then queues it in the
+    /// dimension its session is placed in, as the bridge does with a packet from a socket.
+    pub fn queue<P: Packet + Encode>(&mut self, anchor: Entity, packet: &P) {
+        let mut data = Vec::new();
+        packet.encode(&mut data).unwrap();
+        let data = Bytes::from(data);
+        let trigger = PacketDispatcher::serverbound()
+            .dispatch(ConnectionState::Game, P::ID, &data)
+            .unwrap();
+        let timestamp = std::time::Instant::now();
+        let world = self.app.world_mut();
+        if let (Some(trigger), Some(connection)) = (
+            trigger,
+            world
+                .get::<SessionConnection>(anchor)
+                .map(SessionConnection::entity),
+        ) {
+            trigger.raise(&mut world.commands(), connection, data.clone(), timestamp);
+            world.flush();
+        }
+        let dim = world
+            .get::<SessionPlacement>(anchor)
+            .and_then(|placement| placement.place().dim())
+            .unwrap_or(self.dim);
+        self.submit_to(
+            dim,
+            ToDim::Serverbound(InboundPlayerPacket {
+                player: anchor,
+                id: P::ID,
+                trigger,
+                data,
+                timestamp,
+            }),
+        );
+    }
+
+    /// Queues `packet` from `anchor` and returns the packets of the next two ticks.
+    pub fn send<P: Packet + Encode>(&mut self, anchor: Entity, packet: &P) -> Vec<PacketPayload> {
+        self.queue(anchor, packet);
+        self.ticks(anchor, 2)
+    }
+
+    pub fn player(&mut self, anchor: Entity) -> Entity {
+        self.player_in(self.dim, anchor)
+            .expect("the player is in the dimension")
+    }
+
+    pub fn player_in(&mut self, dim: Entity, anchor: Entity) -> Option<Entity> {
+        let world = self.world_in(dim);
+        world
+            .query_filtered::<(Entity, &HostAnchor), With<Player>>()
+            .iter(world)
+            .find(|(_, host)| host.0 == anchor)
+            .map(|(player, _)| player)
+    }
+
+    pub fn game_mode(&mut self, anchor: Entity) -> GameMode {
+        let player = self.player(anchor);
+        self.world().get::<PlayerGameMode>(player).unwrap().0
+    }
 }

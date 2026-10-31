@@ -3,7 +3,6 @@
 extern crate core;
 
 pub mod block_light_table;
-mod client_info;
 pub mod runner;
 pub use runner::{DEFAULT_TPS, run_server_loop};
 pub mod configuration;
@@ -15,7 +14,6 @@ pub mod world;
 pub mod world_options;
 
 pub use crate::block_light_table::LightingPlugin;
-use crate::client_info::ClientInfoPlugin;
 use crate::configuration::ConfigurationStatePlugin;
 use crate::keep_alive::KeepAlivePlugin;
 use crate::login::{LoginPlugin, SingleplayerProfile};
@@ -35,9 +33,9 @@ use std::time::Duration;
 pub use login::NetworkCompressionThreshold;
 #[cfg(feature = "client-jar")]
 pub use mcrs_minecraft_client_jar::ClientJar;
+pub use mcrs_minecraft_game_mode::GameMode;
 pub use mcrs_minecraft_level::server_loop::spawn_server_thread;
 pub use mcrs_minecraft_network::BoundAddress;
-pub use mcrs_minecraft_protocol::GameMode;
 
 /// Where the server reads the game's data pack.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +127,10 @@ impl PluginGroup for MinecraftServerPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(self.core)
+            .add(mcrs_minecraft_command_engine::CommandPlugin::<
+                mcrs_minecraft_command_vanilla::VanillaCommands,
+            >::new())
+            .add(mcrs_minecraft_command_vanilla::VanillaCommandsPlugin)
             .add(self.worlds)
             .add(WorldGenPlugin)
             .add(LightingPlugin)
@@ -256,8 +258,9 @@ impl Plugin for DimensionWorldsPlugin {
             app.insert_resource(crate::world_options::PluginDimensions(dimensions.clone()));
         }
         app.insert_resource(self.ops.clone());
+        app.add_observer(ops::broadcast_to_operators);
         app.insert_resource(ops::DefaultOpLevel(
-            crate::world::entity::player::ability::PlayerOpLevel(self.default_op_level),
+            mcrs_minecraft_engine::ability::PlayerOpLevel(self.default_op_level),
         ));
         app.insert_resource(crate::world::entity::player::DefaultGameMode(
             self.default_game_mode,
@@ -321,7 +324,9 @@ impl Plugin for ServerNetworkPlugin {
         app.add_plugins(LoginPlugin);
         app.add_plugins(ConfigurationStatePlugin);
         app.add_plugins(KeepAlivePlugin);
-        app.add_plugins(ClientInfoPlugin);
+        if !app.is_plugin_added::<mcrs_minecraft_engine::client_info::ClientInfoPlugin>() {
+            app.add_plugins(mcrs_minecraft_engine::client_info::ClientInfoPlugin);
+        }
         app.add_plugins(StatusPlugin);
     }
 }

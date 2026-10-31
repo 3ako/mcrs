@@ -360,6 +360,30 @@ impl<I: TextTypes> From<Text<I>> for TranslateArg<I> {
     }
 }
 
+impl<I: TextTypes> From<i32> for TranslateArg<I> {
+    fn from(value: i32) -> Self {
+        TranslateArg::Number(NbtTag::Int(value))
+    }
+}
+
+impl<I: TextTypes> From<i64> for TranslateArg<I> {
+    fn from(value: i64) -> Self {
+        TranslateArg::Number(NbtTag::Long(value))
+    }
+}
+
+impl<I: TextTypes> From<f32> for TranslateArg<I> {
+    fn from(value: f32) -> Self {
+        TranslateArg::Number(NbtTag::Float(value))
+    }
+}
+
+impl<I: TextTypes> From<String> for TranslateArg<I> {
+    fn from(value: String) -> Self {
+        TranslateArg::Text(Text::text(value))
+    }
+}
+
 impl<I: TextSerde> Serialize for TranslateArg<I> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -917,7 +941,10 @@ fn positive_int<'de, D: Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
 
 fn chat_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let value = String::deserialize(d)?;
-    if let Some(c) = value.chars().find(|&c| c == '§' || c < ' ' || c == '\x7f') {
+    if let Some(c) = value
+        .chars()
+        .find(|&c| !mcrs_command::is_allowed_chat_character(c))
+    {
         return Err(de::Error::custom(format_args!(
             "Disallowed chat character: '{c}'"
         )));
@@ -1100,7 +1127,7 @@ pub enum HoverEvent<I: TextTypes> {
     ShowItem(Box<I>),
     ShowEntity {
         id: I::EntityKey,
-        #[serde(with = "lenient_uuid")]
+        #[serde(with = "uuid_form")]
         uuid: Uuid,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<Text<I>>,
@@ -1119,7 +1146,7 @@ impl<'de, I: TextSerde> Deserialize<'de> for HoverEvent<I> {
         #[serde(bound = "I: TextSerde")]
         struct ShowEntity<I: TextTypes> {
             id: I::EntityKey,
-            #[serde(deserialize_with = "lenient_uuid::deserialize")]
+            #[serde(deserialize_with = "uuid_form::deserialize")]
             uuid: Uuid,
             #[serde(default)]
             name: Option<Text<I>>,
@@ -1145,17 +1172,20 @@ impl<'de, I: TextSerde> Deserialize<'de> for HoverEvent<I> {
     }
 }
 
-/// Four ints, or on read the hyphenated string.
-mod lenient_uuid {
+/// Four ints, or on read the hyphenated string of 36 characters.
+mod uuid_form {
     use super::*;
 
     pub(super) fn serialize<S: serde::Serializer>(uuid: &Uuid, s: S) -> Result<S::Ok, S::Error> {
         mcrs_minecraft_profile::uuid_ints(*uuid).serialize(s)
     }
 
+    const HYPHENATED_LENGTH: usize = 36;
+
     fn from_string(v: &str) -> Result<Uuid, String> {
-        mcrs_minecraft_nbt::snbt::parse_lenient_uuid(v)
-            .map(|(most, least)| Uuid::from_u64_pair(most as u64, least as u64))
+        Uuid::try_parse(v)
+            .ok()
+            .filter(|_| v.len() == HYPHENATED_LENGTH && v.matches('-').count() == 4)
             .ok_or_else(|| format!("Invalid UUID string: {v}"))
     }
 
@@ -1199,11 +1229,20 @@ impl<I: TextTypes> Text<I> {
     /// Create translated text based on the given translation key, with extra
     /// text components to be inserted into the slots of the translation text.
     pub fn translate(key: impl Into<Cow<'static, str>>, with: impl Into<Vec<Text<I>>>) -> Self {
+        let with: Vec<_> = with.into().into_iter().map(TranslateArg::Text).collect();
+        Self::translate_args(key, with)
+    }
+
+    /// Translated text whose arguments may be primitives as well as components.
+    pub fn translate_args(
+        key: impl Into<Cow<'static, str>>,
+        with: impl Into<Vec<TranslateArg<I>>>,
+    ) -> Self {
         Self(Box::new(TextInner {
             content: TextContent::Translate {
                 translate: key.into(),
                 fallback: None,
-                with: with.into().into_iter().map(TranslateArg::Text).collect(),
+                with: with.into(),
             },
             ..Default::default()
         }))

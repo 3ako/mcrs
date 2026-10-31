@@ -1,16 +1,15 @@
 use bevy_app::{FixedPostUpdate, FixedUpdate, Plugin};
-use bevy_ecs::component::Component;
 use bevy_ecs::prelude::{
     Changed, DetectChangesMut, Entity, Message, MessageReader, MessageWriter, Mut, On, Query, With,
 };
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_math::DVec3;
+use mcrs_minecraft_core::Look;
 use mcrs_minecraft_engine::bus::to;
 use mcrs_minecraft_level::entity::physics::{Rotation, Transform};
 use mcrs_minecraft_level::tick::TickSet;
 use mcrs_minecraft_level::voxel_update::VoxelUpdateSet;
 use mcrs_minecraft_network::event::Received;
-use mcrs_minecraft_protocol::Look;
 use mcrs_minecraft_protocol::VarInt;
 use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundPlayerPosition;
 use mcrs_minecraft_protocol::packets::game::serverbound::{
@@ -18,8 +17,10 @@ use mcrs_minecraft_protocol::packets::game::serverbound::{
     ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly,
 };
 
-use crate::world::entity::player::HostAnchor;
+use crate::world::entity::player::dimension_change::CarryOnDimensionChangeExt;
 use mcrs_minecraft_engine::bus::{OutboundPlayerPacket, PacketPayload};
+use mcrs_minecraft_engine::session::HostAnchor;
+use mcrs_minecraft_engine::teleport::{MAX_XZ, MAX_Y, TeleportState};
 
 pub struct MovementPlugin;
 
@@ -31,60 +32,12 @@ impl Plugin for MovementPlugin {
         app.add_observer(handle_move_status_only);
         app.add_observer(handle_accept_teleportation);
         app.add_message::<PlayerMovement>();
+        app.carry_on_dimension_change::<TeleportState>();
         app.add_systems(FixedUpdate, process_movement.in_set(TickSet::Input));
         app.add_systems(
             FixedPostUpdate,
             teleport.before(VoxelUpdateSet::NetworkSync),
         );
-    }
-}
-
-#[derive(Component, Debug, Default)]
-pub struct TeleportState {
-    /// Counts up as teleports are made.
-    teleport_id_counter: u32,
-    /// The number of pending client teleports that have yet to receive a
-    /// confirmation. Inbound client position packets should be ignored while
-    /// this is nonzero.
-    pending_teleports: u32,
-    synced_transform: Transform,
-}
-
-impl TeleportState {
-    pub fn teleport_id_counter(&self) -> u32 {
-        self.teleport_id_counter
-    }
-
-    pub fn pending_teleports(&self) -> u32 {
-        self.pending_teleports
-    }
-
-    /// Claim the next teleport id from the shared sequence and register a
-    /// pending confirmation. Used by both the login position sync and the
-    /// server-authoritative `teleport` system so login ids draw from the same
-    /// monotonic counter and can never alias a later teleport id.
-    pub fn next_teleport_id(&mut self) -> i32 {
-        let id = self.teleport_id_counter as i32;
-        self.teleport_id_counter = self.teleport_id_counter.wrapping_add(1);
-        self.pending_teleports = self.pending_teleports.wrapping_add(1);
-        id
-    }
-
-    /// Teleport id reserved for the login position sync. The spawn consumer
-    /// sends `PlayerPosition` with this id at login, so the runtime counter is
-    /// initialized past it (see [`Self::after_login`]) and the first
-    /// server-authoritative teleport draws the next id without aliasing.
-    pub const LOGIN_TELEPORT_ID: i32 = 0;
-
-    /// Initial state for a freshly spawned player whose login position sync has
-    /// already claimed [`Self::LOGIN_TELEPORT_ID`]. The counter starts past the
-    /// login id and one confirmation is outstanding for that login teleport.
-    pub fn after_login() -> Self {
-        Self {
-            teleport_id_counter: (Self::LOGIN_TELEPORT_ID as u32).wrapping_add(1),
-            pending_teleports: 1,
-            ..Default::default()
-        }
     }
 }
 
@@ -151,8 +104,6 @@ pub(crate) fn process_movement(
     mut reader: MessageReader<PlayerMovement>,
     mut query: Query<(Mut<TeleportState>, Mut<Transform>)>,
 ) {
-    const MAX_XZ: f64 = 30_000_000.0;
-    const MAX_Y: f64 = 20_000_000.0;
     const MAX_POS: DVec3 = DVec3::new(MAX_XZ, MAX_Y, MAX_XZ);
     const MIN_POS: DVec3 = DVec3::new(-MAX_XZ, -MAX_Y, -MAX_XZ);
 
@@ -160,13 +111,16 @@ pub(crate) fn process_movement(
         let Ok((mut state, mut transform)) = query.get_mut(m.entity) else {
             return;
         };
+        if state.pending_teleports() > 0 {
+            return;
+        }
         if let Some(p) = m.position {
             transform.set_if_neq(transform.with_translation(p.clamp(MIN_POS, MAX_POS)));
         }
         if let Some(l) = m.look {
             transform.set_if_neq(transform.with_rotation(l));
         }
-        state.synced_transform = *transform;
+        state.sync(*transform);
     })
 }
 
@@ -178,13 +132,12 @@ fn teleport(
     mut packet_writer: MessageWriter<OutboundPlayerPacket>,
 ) {
     for (anchor, mut state, transform) in &mut clients {
-        let changed_pos = transform.translation != state.synced_transform.translation;
-        let changed_rot = transform.rotation != state.synced_transform.rotation;
+        let synced = state.synced_transform();
+        let changed_pos = transform.translation != synced.translation;
+        let changed_rot = transform.rotation != synced.rotation;
 
         if changed_pos || changed_rot {
-            state.synced_transform = *transform;
-
-            let teleport_id = state.next_teleport_id();
+            let teleport_id = state.sent(*transform);
             packet_writer.write(
                 to(
                     anchor.0,
@@ -216,7 +169,7 @@ fn handle_accept_teleportation(
         return;
     }
     if let Ok(mut state) = players.get_mut(event.entity) {
-        state.pending_teleports = state.pending_teleports.saturating_sub(1);
+        state.confirm();
     }
 }
 
@@ -275,5 +228,30 @@ mod tests {
             (state.pending_teleports(), state.teleport_id_counter()),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn a_client_move_applies_only_once_every_teleport_is_confirmed() {
+        let mut world = World::new();
+        world.init_resource::<Messages<PlayerMovement>>();
+        let awaiting = world
+            .spawn((Transform::default(), TeleportState::after_login()))
+            .id();
+        let confirmed = world
+            .spawn((Transform::default(), TeleportState::default()))
+            .id();
+        let to = DVec3::new(5.0, 64.0, 5.0);
+        for entity in [awaiting, confirmed] {
+            world.write_message(PlayerMovement {
+                entity,
+                position: Some(to),
+                look: None,
+            });
+        }
+
+        world.run_system_once(process_movement).unwrap();
+
+        let at = |entity| world.get::<Transform>(entity).unwrap().translation;
+        assert_eq!((at(awaiting), at(confirmed)), (DVec3::ZERO, to));
     }
 }

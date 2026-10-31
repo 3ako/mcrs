@@ -12,7 +12,7 @@
 //! before fan-out.
 
 use bevy_ecs::message::{MessageReader, MessageWriter};
-use bevy_ecs::prelude::{Commands, Entity, Query, With};
+use bevy_ecs::prelude::{Commands, Entity, In, Query, With};
 use mcrs_minecraft_engine::bus::to;
 use mcrs_minecraft_level::entity::player::Player;
 use mcrs_minecraft_protocol::VarInt;
@@ -20,9 +20,9 @@ use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundRemoveEntiti
 use smallvec::SmallVec;
 
 use crate::world::aoi::components::TrackedBy;
-use crate::world::entity::player::HostAnchor;
 use crate::world::entity::player::column_view::ColumnView;
 use mcrs_minecraft_engine::bus::{InboundPlayerDespawn, OutboundPlayerPacket, PacketPayload};
+use mcrs_minecraft_engine::session::HostAnchor;
 
 /// Per-dim drain: reads `InboundPlayerDespawn` messages and runs the full
 /// eviction sequence for the resolved in-dim `Player`:
@@ -52,55 +52,79 @@ pub fn drain_inbound_player_despawn(
             .iter()
             .find_map(|(e, anchor)| (anchor.0 == host_anchor).then_some(e));
         let Some(target) = in_dim_entity else {
-            // No per-dim Player carries this host_anchor — happens when the
-            // disconnect message arrives for a dim the player never reached
-            // (mid-transit disconnect into the previous_dim bundle), or
-            // before the per-dim spawn consumer has wired HostAnchor onto
-            // the in-dim Player. Harmless: there is nothing to evict here.
+            // No player of this dimension carries the anchor yet: the disconnect came before
+            // the spawn of the player here. There is nothing to evict.
             continue;
         };
 
-        let left_view = ClientboundRemoveEntities {
-            entity_ids: vec![VarInt(target.index_u32() as i32)],
-        };
-
-        // Emit PlayerLeftView to former observers before any cache is mutated.
-        // Former observers are all in-dim players whose TrackedBy currently
-        // contains `target`. Shared borrow of player_caches here; the loop
-        // completes before the mutable pass below.
-        //
-        // This must run inside the drain rather than update_tracked_by because
-        // the drain wipes PlayerObservers and TrackedBy before update_tracked_by
-        // ever runs (FixedPreUpdate vs FixedPostUpdate), so update_tracked_by
-        // will never see the left-view transition for a removed player.
-        for (observer_entity, _) in player_lookup.iter() {
-            if observer_entity == target {
-                continue;
-            }
-            if let Ok(tracked_by) = player_caches.get(observer_entity)
-                && tracked_by.0.contains(&target)
-            {
-                packet_writer.write(to(
-                    observer_entity,
-                    PacketPayload::PlayerLeftView(left_view.clone()),
-                ));
-            }
-        }
-
-        // Single mutable pass over all in-dim player caches.
-        // Target's own row: clear it (self-teardown).
-        // Every other row: retain-remove target from TrackedBy (proactive eviction).
-        for (entity, _) in player_lookup.iter() {
-            if let Ok(mut tracked_by) = player_caches.get_mut(entity) {
-                if entity == target {
-                    tracked_by.0.clear();
-                } else {
-                    tracked_by.0.retain(|e| *e != target);
-                }
-            }
-        }
-
+        evict(
+            target,
+            host_anchor,
+            &player_lookup,
+            &mut player_caches,
+            &mut packet_writer,
+        );
         commands.entity(target).try_remove::<ColumnView>();
+    }
+}
+
+/// A player that leaves this dimension for another one, through the same eviction as a
+/// player that disconnects; the caller despawns it.
+pub(crate) fn leave_dimension(
+    In(target): In<Entity>,
+    player_lookup: Query<(Entity, &HostAnchor), With<Player>>,
+    mut player_caches: Query<&mut TrackedBy, With<Player>>,
+    mut packet_writer: MessageWriter<OutboundPlayerPacket>,
+) {
+    let Ok((_, &HostAnchor(host_anchor))) = player_lookup.get(target) else {
+        return;
+    };
+    evict(
+        target,
+        host_anchor,
+        &player_lookup,
+        &mut player_caches,
+        &mut packet_writer,
+    );
+}
+
+fn evict(
+    target: Entity,
+    host_anchor: Entity,
+    player_lookup: &Query<(Entity, &HostAnchor), With<Player>>,
+    player_caches: &mut Query<&mut TrackedBy, With<Player>>,
+    packet_writer: &mut MessageWriter<OutboundPlayerPacket>,
+) {
+    let left_view = ClientboundRemoveEntities {
+        entity_ids: vec![VarInt(
+            mcrs_minecraft_engine::network_id::player_network_id(host_anchor),
+        )],
+    };
+
+    // The former observers are found through their TrackedBy, so they hear of the leave before
+    // the pass below removes `target` from it; update_tracked_by runs later and never sees it.
+    for (observer_entity, &HostAnchor(observer)) in player_lookup.iter() {
+        if observer_entity == target {
+            continue;
+        }
+        if let Ok(tracked_by) = player_caches.get(observer_entity)
+            && tracked_by.0.contains(&target)
+        {
+            packet_writer.write(to(
+                observer,
+                PacketPayload::PlayerLeftView(left_view.clone()),
+            ));
+        }
+    }
+
+    for (entity, _) in player_lookup.iter() {
+        if let Ok(mut tracked_by) = player_caches.get_mut(entity) {
+            if entity == target {
+                tracked_by.0.clear();
+            } else {
+                tracked_by.0.retain(|e| *e != target);
+            }
+        }
     }
 }
 

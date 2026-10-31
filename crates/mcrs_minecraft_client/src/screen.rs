@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
-use mcrs_minecraft_protocol::GameMode;
+use mcrs_minecraft_game_mode::GameMode;
 
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -8,6 +8,7 @@ pub enum Screen {
     None,
     Inventory,
     GameModeSwitcher(GameMode),
+    Chat,
 }
 
 pub(crate) fn grab(cursor: &mut CursorOptions, grabbed: bool) {

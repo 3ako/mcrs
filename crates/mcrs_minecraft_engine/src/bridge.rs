@@ -249,6 +249,8 @@ fn encode_and_send(
                 PacketPayload::ChunkUnload(p) => conn.raw.append(&p),
                 PacketPayload::EntityPosSync(p) => conn.raw.append(&p),
                 PacketPayload::GameEvent(p) => conn.raw.append(&p),
+                PacketPayload::PlayerLookAt(p) => conn.raw.append(&p),
+                PacketPayload::PlayerAbilities(p) => conn.raw.append(&p),
                 PacketPayload::PlayerEnteredView(p) => conn.raw.append(&p),
                 PacketPayload::ChunkLoad {
                     column,
@@ -275,6 +277,7 @@ fn encode_and_send(
                 PacketPayload::ChunkBatchFinished(p) => conn.raw.append(&p),
                 PacketPayload::PlayerLeftView(p) => conn.raw.append(&p),
                 PacketPayload::PlayerLogin(p) => conn.raw.append(&p),
+                PacketPayload::Respawn(p) => conn.raw.append(&p),
                 PacketPayload::OpLevelEntityEvent(p) => conn.raw.append(&p),
                 PacketPayload::SetChunkCacheCenter(p) => conn.raw.append(&p),
                 PacketPayload::SetChunkCacheRadius(p) => conn.raw.append(&p),
@@ -299,6 +302,9 @@ fn encode_and_send(
                 }
                 PacketPayload::PlayerPosition(p) => conn.raw.append(&p),
                 PacketPayload::SystemChat(p) => conn.raw.append(&p),
+                PacketPayload::Commands(p) => conn.raw.append_encoded(&p),
+                PacketPayload::CommandSuggestions(p) => conn.raw.append(&p),
+                PacketPayload::SetTime(p) => conn.raw.append(&p),
                 PacketPayload::Test(_) => {
                     // Test-only payload; no wire packet. Counted-drop so
                     // test assertions on encode_unhandled_total work.
@@ -323,7 +329,8 @@ fn encode_and_send(
 /// Routes serverbound packets written to the bus into the dim channel seam.
 ///
 /// `bridge_inbound` handles packets read from sockets; this system handles the
-/// ones written by upstream callers. A full serverbound channel disconnects the
+/// ones written by upstream callers, and raises their typed events on the host
+/// connection as `bridge_inbound` does. A full serverbound channel disconnects the
 /// offending session.
 pub fn bridge_inbound_to_channel(
     mut msgs: ResMut<Messages<InboundPlayerPacket>>,
@@ -339,6 +346,14 @@ pub fn bridge_inbound_to_channel(
         let Ok((placement, mut pending, connection)) = sessions.get_mut(msg.player) else {
             continue;
         };
+        if let (Some(trigger), Some(connection)) = (msg.trigger, connection) {
+            trigger.raise(
+                &mut commands,
+                connection.entity(),
+                msg.data.clone(),
+                msg.timestamp,
+            );
+        }
         if !route_serverbound(placement, &mut pending, &dim_channels, msg)
             && let Some(connection) = connection
         {
@@ -384,7 +399,7 @@ pub fn bridge_player_attach(
         let Ok(mut placement) = placements.get_mut(msg.host_anchor) else {
             continue;
         };
-        if let Place::Joining(dim) | Place::Transferring { to: dim, .. } = placement.place() {
+        if let Place::Joining(dim) = placement.place() {
             placement.set(Place::InDim(dim));
         }
     }

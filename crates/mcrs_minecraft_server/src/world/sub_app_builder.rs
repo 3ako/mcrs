@@ -13,10 +13,7 @@ use mcrs_minecraft_world::worldgen::chunk_generator::ChunkGenerator;
 use std::collections::VecDeque;
 use tracing::{error, warn};
 
-use mcrs_minecraft_engine::bus::{
-    InboundConfirmMove, InboundEntitySpawn, InboundPlayerDespawn, InboundPlayerSpawn,
-    InboundRollbackMove, OutboundPlayerPacket,
-};
+use mcrs_minecraft_engine::bus::{InboundPlayerDespawn, InboundPlayerSpawn, OutboundPlayerPacket};
 use mcrs_minecraft_engine::channel_types::{FromDim, ToDim};
 use mcrs_minecraft_engine::dim::DimSubAppHandle;
 use mcrs_minecraft_level::block_update::{BlockPlaced, BlockSetRequest};
@@ -26,7 +23,7 @@ use mcrs_minecraft_level::world::channels::{
 };
 
 /// System set for inbox drain systems, run early in `FixedPreUpdate`.
-/// Arrival and other systems that consume inbound messages run after this set.
+/// Systems that consume inbound messages run after this set.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DimInboxDrain;
 
@@ -232,6 +229,7 @@ pub fn spawn_dim_subapp(
         control: to_dim_ctl_rx,
     });
     sub_app.insert_resource(FromDimSender::<FromDim>(from_dim_tx));
+    sub_app.init_resource::<FromDimBacklog>();
 
     // Per-sub-app message registrations. Only types that still flow through
     // the dim sub-app's Messages<T> double-buffer (intra-dim use) are kept.
@@ -255,12 +253,7 @@ pub fn spawn_dim_subapp(
     // `OutboundPlayerAttached` is written by `consume_inbound_player_spawn` and
     // extracted by the host to attach the session.
     sub_app.add_message::<mcrs_minecraft_engine::bus::OutboundPlayerAttached>();
-    // Confirmed-move inbound messages drained from the control channel and read
-    // by the arrival systems (SpawnEntity) and source-dim systems (ConfirmMove,
-    // RollbackMove).
-    sub_app.add_message::<InboundEntitySpawn>();
-    sub_app.add_message::<InboundConfirmMove>();
-    sub_app.add_message::<InboundRollbackMove>();
+    sub_app.add_message::<mcrs_minecraft_level::entity::player::ChangeDimensionRequest>();
     // The sub-app builder is the single source of truth for these registrations — `BlockUpdatePlugin`
     // no longer registers them and instead debug-asserts they are already in
     // place, so a mistaken host-side `add_plugins(BlockUpdatePlugin)` fails
@@ -273,7 +266,7 @@ pub fn spawn_dim_subapp(
     if column_traces.is_some() {
         sub_app.init_resource::<ColumnTraceLog>();
     }
-    sub_app.insert_resource(mcrs_minecraft_level::world::in_flight::MoveIds::new(
+    sub_app.insert_resource(mcrs_minecraft_level::world::sub_app::DimensionLabel(
         label_entity,
     ));
 
@@ -492,7 +485,6 @@ pub fn spawn_dim_subapp(
     sub_app.add_plugins(BlockUpdatePlugin);
     sub_app.add_plugins(BlockUpdateWirePlugin);
     sub_app.add_plugins(MinecraftEntityPlugin);
-    sub_app.add_plugins(crate::world::arrival::ArrivalPlugin);
     sub_app.add_plugins(DimHeightmapPlugin);
     let default_op_level = app
         .world()
@@ -538,6 +530,7 @@ pub fn spawn_dim_subapp(
     sub_app.insert_resource(Time::<Virtual>::default());
     sub_app.insert_resource(Time::<Real>::default());
     sub_app.init_resource::<mcrs_minecraft_environment::world_clock::WorldClocks>();
+    sub_app.init_resource::<mcrs_minecraft_engine::clock::GameTime>();
     sub_app.init_resource::<crate::ops::OpList>();
 
     sub_app.set_extract(move |main_world, sub_world| {
@@ -558,6 +551,7 @@ pub fn spawn_dim_subapp(
             sub_world.insert_resource(*time);
         }
         mcrs_minecraft_environment::world_clock::extract_world_clocks(main_world, sub_world);
+        mcrs_minecraft_engine::clock::extract_game_time(main_world, sub_world);
         mcrs_minecraft_world::registry_snapshot::extract_registries(main_world, sub_world);
         if let Some(ops) = main_world.get_resource::<crate::ops::OpList>() {
             sub_world.insert_resource(ops.clone());
@@ -637,17 +631,13 @@ pub fn spawn_dim_subapp(
 }
 
 /// Drains both `ToDim` channel receivers into the dim's local message buses.
-/// The control channel (Spawn/Despawn/Attach/SpawnEntity/ConfirmMove/RollbackMove)
-/// is drained first so lifecycle messages always precede any same-tick Serverbound
-/// packet for a freshly transferred player.
+/// The control channel (Spawn/Despawn) is drained first so lifecycle messages
+/// always precede any same-tick Serverbound packet for a freshly spawned player.
 fn drain_to_dim_inbox(
     rx: Res<ToDimReceiver<ToDim>>,
     mut spawn_msgs: ResMut<Messages<InboundPlayerSpawn>>,
     mut despawn_msgs: ResMut<Messages<InboundPlayerDespawn>>,
     mut serverbound_msgs: ResMut<Messages<mcrs_minecraft_engine::bus::InboundPlayerPacket>>,
-    mut entity_spawn_msgs: ResMut<Messages<InboundEntitySpawn>>,
-    mut confirm_msgs: ResMut<Messages<InboundConfirmMove>>,
-    mut rollback_msgs: ResMut<Messages<InboundRollbackMove>>,
 ) {
     for msg in rx.control.try_iter() {
         match msg {
@@ -658,15 +648,6 @@ fn drain_to_dim_inbox(
                 despawn_msgs.write(m);
             }
             ToDim::Serverbound(_) => {}
-            ToDim::SpawnEntity(m) => {
-                entity_spawn_msgs.write(m);
-            }
-            ToDim::ConfirmMove(m) => {
-                confirm_msgs.write(m);
-            }
-            ToDim::RollbackMove(m) => {
-                rollback_msgs.write(m);
-            }
         }
     }
     for msg in rx.serverbound.try_iter() {
@@ -675,6 +656,10 @@ fn drain_to_dim_inbox(
         }
     }
 }
+
+/// What a dimension produced and its full channel did not take yet, oldest first.
+#[derive(bevy_ecs::resource::Resource, Default)]
+pub(crate) struct FromDimBacklog(pub(crate) VecDeque<FromDim>);
 
 /// Drains the dim's local `Messages<OutboundPlayerPacket>` into the `FromDim`
 /// channel so the host-side `pump_channels` can epoch-stamp and forward them.
@@ -690,8 +675,9 @@ pub(crate) fn flush_from_dim_outbox(
     mut msgs: ResMut<Messages<OutboundPlayerPacket>>,
     mut released: ResMut<Messages<mcrs_minecraft_engine::bus::OutboundPlayerReleased>>,
     sender: Res<FromDimSender<FromDim>>,
-    mut backlog: Local<VecDeque<FromDim>>,
+    mut backlog: ResMut<FromDimBacklog>,
 ) {
+    let backlog = &mut backlog.0;
     backlog.extend(msgs.drain().map(FromDim::Clientbound));
     backlog.extend(released.drain().map(|released| FromDim::Released {
         session: released.session,
@@ -759,6 +745,7 @@ mod tests {
             Messages::<mcrs_minecraft_engine::bus::OutboundPlayerReleased>::default(),
         );
         world.insert_resource(FromDimSender(tx));
+        world.init_resource::<FromDimBacklog>();
         let mut msgs = world.resource_mut::<Messages<OutboundPlayerPacket>>();
         for seq in 0..written as u32 {
             msgs.write(OutboundPlayerPacket {

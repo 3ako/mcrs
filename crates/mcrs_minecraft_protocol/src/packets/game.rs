@@ -1,7 +1,9 @@
 pub mod clientbound {
     use crate::ByteAngle;
+    use crate::CommandSuggestion;
     use crate::advancement::{AdvancementProgress, PositionedAdvancement};
     use crate::block::BlockStateNumber;
+    use crate::chat::{ChatTypeId, CompletionAction, FilterMask, PackedSignature};
     use crate::chunk::ChunkBlockUpdateEntry;
     use crate::entity::minecart::MinecartStep;
     use crate::entity::player::*;
@@ -12,9 +14,12 @@ pub mod clientbound {
     use crate::profile::{PlayerListActions, PlayerListEntry};
     use crate::recipe::{RecipeBookEntry, RecipeBookSettings, RecipePropertySet, SelectableRecipe};
     use crate::text::Text;
-    use crate::{ColumnPos, Look, LpVec3, PositionFlags, Result, VarInt};
+    use crate::{Bounded, ColumnPos, LpVec3, PositionFlags, Result, VarInt, VarLong};
     use glam::DVec3;
+    use mcrs_minecraft_command_tree::CommandNode;
     use mcrs_minecraft_core::BlockPos;
+    use mcrs_minecraft_core::Look;
+    use mcrs_minecraft_core::LookAnchor;
     use mcrs_minecraft_core::ResourceKey;
     use mcrs_minecraft_core::ResourceLocation;
     use mcrs_minecraft_core::SectionPos;
@@ -374,6 +379,60 @@ pub mod clientbound {
         pub flags: PositionFlags,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct ClientboundPlayerAbilities {
+        pub invulnerable: bool,
+        pub flying: bool,
+        pub may_fly: bool,
+        pub instant_build: bool,
+        pub flying_speed: f32,
+        pub walking_speed: f32,
+    }
+
+    impl Encode for ClientboundPlayerAbilities {
+        fn encode(&self, mut w: impl Write) -> Result<()> {
+            let flags = u8::from(self.invulnerable)
+                | u8::from(self.flying) << 1
+                | u8::from(self.may_fly) << 2
+                | u8::from(self.instant_build) << 3;
+            flags.encode(&mut w)?;
+            self.flying_speed.encode(&mut w)?;
+            self.walking_speed.encode(w)
+        }
+    }
+
+    impl Decode<'_> for ClientboundPlayerAbilities {
+        fn decode(r: &mut &[u8]) -> Result<Self> {
+            let flags = u8::decode(r)?;
+            let [invulnerable, flying, may_fly, instant_build] =
+                [0, 1, 2, 3].map(|bit| flags & 1 << bit != 0);
+            Ok(Self {
+                invulnerable,
+                flying,
+                may_fly,
+                instant_build,
+                flying_speed: f32::decode(r)?,
+                walking_speed: f32::decode(r)?,
+            })
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Encode, Decode)]
+    pub struct ClientboundPlayerLookAt {
+        pub from: LookAnchor,
+        pub target: DVec3,
+        pub entity: Option<LookAtEntity>,
+    }
+
+    /// The entity of `player_look_at` that the client keeps looking at.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+    pub struct LookAtEntity {
+        /// The network id of the entity.
+        pub id: VarInt,
+        /// The part of the entity to look at.
+        pub anchor: LookAnchor,
+    }
+
     #[derive(Clone, Debug, PartialEq, Encode, Decode)]
     pub struct ClientboundRecipeBookAdd {
         pub entries: Vec<RecipeBookEntry<Wire>>,
@@ -552,10 +611,80 @@ pub mod clientbound {
         pub registries: Vec<crate::packets::configuration::clientbound::RegistryTags<'a>>,
     }
 
+    #[derive(Clone, Debug, PartialEq, Encode, Decode)]
+    pub struct ClientboundCommands<'a> {
+        pub nodes: Vec<CommandNode<'a>>,
+        pub root: VarInt,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Encode, Decode)]
+    pub struct ClientboundCommandSuggestions<'a> {
+        pub id: VarInt,
+        pub start: VarInt,
+        pub length: VarInt,
+        pub suggestions: Vec<CommandSuggestion<'a>>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Encode, Decode)]
+    pub struct ClientboundSetTime {
+        pub game_time: i64,
+        pub clocks: Vec<ClockUpdate>,
+    }
+
+    /// One clock of `set_time`; `rate` is 0 for a clock that does not advance.
+    #[derive(Clone, Copy, Debug, PartialEq, Encode, Decode)]
+    pub struct ClockUpdate {
+        pub clock: VarInt,
+        pub total_ticks: VarLong,
+        pub partial_tick: f32,
+        pub rate: f32,
+    }
+
     #[derive(Clone, Debug, Encode, Decode)]
     pub struct ClientboundSystemChatPacket {
         pub content: Text,
         pub overlay: bool,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ClientboundSetActionBarText {
+        pub text: Text,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ClientboundDisguisedChat {
+        pub message: Text,
+        pub chat_type: ChatTypeId,
+        pub sender_name: Text,
+        pub target_name: Option<Text>,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ClientboundPlayerChat<'a> {
+        pub global_index: VarInt,
+        pub sender: Uuid,
+        pub index: VarInt,
+        pub signature: Option<&'a [u8; 256]>,
+        pub content: Bounded<&'a str, 256>,
+        pub timestamp: u64,
+        pub salt: u64,
+        pub last_seen: Bounded<Vec<PackedSignature<'a>>, 20>,
+        pub unsigned_content: Option<Text>,
+        pub filter: FilterMask,
+        pub chat_type: ChatTypeId,
+        pub sender_name: Text,
+        pub target_name: Option<Text>,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ClientboundCustomChatCompletions<'a> {
+        pub action: CompletionAction,
+        pub entries: Vec<Cow<'a, str>>,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ClientboundPlayerInfoRemove {
+        pub players: Vec<Uuid>,
     }
 
     impl<'a> crate::Encode for ClientboundPlayerInfoUpdate<'a> {
@@ -671,13 +800,11 @@ pub mod serverbound {
     use crate::packets::cookie::serverbound::CookieResponse;
     use crate::pos::MoveFlags;
     use crate::recipe::RecipeBookType;
-    use crate::{
-        Bounded, Decode, Difficulty, Direction, Encode, GameMode, Hand, Look, LpVec3, Position,
-        VarInt,
-    };
+    use crate::{Bounded, Decode, Difficulty, Direction, Encode, Hand, LpVec3, Position, VarInt};
     use bitfield_struct::bitfield;
     use derive_more::From;
-    use mcrs_minecraft_core::{BlockPos, ResourceLocation};
+    use mcrs_minecraft_core::{BlockPos, Look, ResourceLocation};
+    use mcrs_minecraft_game_mode::GameMode;
     use uuid::Uuid;
 
     #[derive(Clone, Debug, PartialEq, Encode, Decode)]
@@ -844,6 +971,12 @@ pub mod serverbound {
     #[derive(Clone, Debug, Encode, Decode)]
     pub struct ServerboundChatAck {
         pub offset: VarInt,
+    }
+
+    #[derive(Clone, Debug, Encode, Decode)]
+    pub struct ServerboundCommandSuggestion<'a> {
+        pub id: VarInt,
+        pub text: Bounded<&'a str, 32500>,
     }
 
     #[derive(Clone, Debug, Encode, Decode)]

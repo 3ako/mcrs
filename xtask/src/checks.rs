@@ -27,14 +27,27 @@ const WASM32_PACKAGES: [&str; 10] = [
     "mcrs_minecraft_biome_file",
 ];
 
-const NO_BEVY_PACKAGES: [&str; 49] = [
+const NO_STD_PACKAGES: [&str; 2] = ["mcrs_command", "mcrs_minecraft_chat"];
+
+const NO_BEVY_PACKAGES: [&str; 63] = [
+    "mcrs_command",
     "mcrs_minecraft_anvil",
     "mcrs_minecraft_biome",
     "mcrs_minecraft_biome_file",
     "mcrs_minecraft_block",
+    "mcrs_minecraft_block_entity",
     "mcrs_minecraft_block_predicate",
+    "mcrs_minecraft_chat",
+    "mcrs_minecraft_chat_client",
     "mcrs_minecraft_chunk",
     "mcrs_minecraft_client_jar",
+    "mcrs_minecraft_command",
+    "mcrs_minecraft_command_argument",
+    "mcrs_minecraft_command_argument_block",
+    "mcrs_minecraft_command_argument_entity",
+    "mcrs_minecraft_command_argument_vanilla",
+    "mcrs_minecraft_command_registry",
+    "mcrs_minecraft_command_tree",
     "mcrs_minecraft_core",
     "mcrs_minecraft_dimension",
     "mcrs_minecraft_dimension_environment",
@@ -42,6 +55,7 @@ const NO_BEVY_PACKAGES: [&str; 49] = [
     "mcrs_minecraft_entity",
     "mcrs_minecraft_environment",
     "mcrs_minecraft_fixtures",
+    "mcrs_minecraft_game_mode",
     "mcrs_minecraft_game_rule",
     "mcrs_minecraft_heightmap",
     "mcrs_minecraft_item",
@@ -60,6 +74,7 @@ const NO_BEVY_PACKAGES: [&str; 49] = [
     "mcrs_minecraft_registries",
     "mcrs_minecraft_registry_catalog",
     "mcrs_minecraft_simulation",
+    "mcrs_minecraft_snbt",
     "mcrs_minecraft_sound",
     "mcrs_minecraft_text",
     "mcrs_minecraft_value_provider",
@@ -77,6 +92,7 @@ const NO_BEVY_PACKAGES: [&str; 49] = [
     "mcrs_minecraft_worldgen_structure_place",
     "mcrs_minecraft_worldgen_surface",
     "mcrs_minecraft_worldgen_testing",
+    "mcrs_test_alloc",
 ];
 
 struct Changes {
@@ -195,18 +211,35 @@ pub fn run(ctx: &Context, check: Check) -> Outcome {
         Check::Clippy => clippy(ctx),
         Check::Test => test(ctx),
         Check::NoBevy => no_bevy(ctx),
-        Check::Wasm32 => {
-            let mut args = vec!["build", "--locked", "--target", "wasm32-unknown-unknown"];
-            for package in WASM32_PACKAGES {
-                args.extend(["-p", package]);
-            }
-            verdict(
-                ctx.exec("cargo", &args)?,
-                "a crate that must run in a browser does not build for wasm32-unknown-unknown",
-                "keep its dependencies free of native-only code",
-            )
-        }
+        Check::NoStd => build_for(
+            ctx,
+            "wasm32v1-none",
+            &NO_STD_PACKAGES,
+            "a crate that must build without std does not build for wasm32v1-none",
+            "keep it #![no_std] and its dependencies free of std",
+        ),
+        Check::Wasm32 => build_for(
+            ctx,
+            "wasm32-unknown-unknown",
+            &WASM32_PACKAGES,
+            "a crate that must run in a browser does not build for wasm32-unknown-unknown",
+            "keep its dependencies free of native-only code",
+        ),
     }
+}
+
+fn build_for(
+    ctx: &Context,
+    target: &str,
+    packages: &[&str],
+    condition: &str,
+    fix: &str,
+) -> Outcome {
+    let mut args = vec!["build", "--locked", "--target", target];
+    for package in packages {
+        args.extend(["-p", package]);
+    }
+    verdict(ctx.exec("cargo", &args)?, condition, fix)
 }
 
 fn no_bevy(ctx: &Context) -> Outcome {

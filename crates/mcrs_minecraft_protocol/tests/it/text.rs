@@ -191,7 +191,10 @@ fn vanilla_probe_cases_read_and_reject_alike() {
                 to_bytes_unnamed(&text, &mut ours).unwrap();
                 let vanilla_nbt = hex(case.nbt.as_ref().unwrap());
                 if nbt_tree(&ours) != nbt_tree(&vanilla_nbt) {
-                    failures.push(format!("{name}: nbt {}", nbt_tree(&ours)));
+                    failures.push(format!(
+                        "{name}: nbt {}",
+                        mcrs_minecraft_snbt::write(&nbt_tree(&ours))
+                    ));
                 }
                 let mut r: &[u8] = &vanilla_nbt;
                 match Text::decode(&mut r) {
@@ -259,7 +262,7 @@ fn an_int_array_below_a_list_stays_an_int_array() {
             .windows(int_array_uuid.len())
             .any(|window| window == int_array_uuid),
         "{}",
-        nbt_tree(&bytes)
+        mcrs_minecraft_snbt::write(&nbt_tree(&bytes))
     );
     let mut alone = Vec::new();
     to_bytes_unnamed(&hover, &mut alone).unwrap();
@@ -306,11 +309,14 @@ fn vanilla_nbt_bytes_decode_to_the_same_json_and_re_encode_to_the_same_tags() {
                 }
                 let mut ours = Vec::new();
                 text.encode(&mut ours).unwrap();
-                let vanilla = sorted(
-                    mcrs_minecraft_nbt::snbt::parse_tag(case.snbt.as_ref().unwrap()).unwrap(),
-                );
+                let vanilla =
+                    sorted(mcrs_minecraft_snbt::parse_tag(case.snbt.as_ref().unwrap()).unwrap());
                 if nbt_tree(&ours) != vanilla {
-                    failures.push(format!("{name}: nbt {} != {vanilla}", nbt_tree(&ours)));
+                    failures.push(format!(
+                        "{name}: nbt {} != {}",
+                        mcrs_minecraft_snbt::write(&nbt_tree(&ours)),
+                        mcrs_minecraft_snbt::write(&vanilla)
+                    ));
                 }
             }
         }
@@ -331,20 +337,8 @@ fn vanilla_json_edge_cases() {
             r#"{"text":"x","shadow_color":-98432}"#,
         ),
         (
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":"1-2-3-4-5"}}"#,
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[1,131075,262144,5]}}"#,
-        ),
-        (
             r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":[1.5,2,3,4]}}"#,
             r#"{"text":"x","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[1,2,3,4]}}"#,
-        ),
-        (
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"100000000-2-3-4-5"}}"#,
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,131075,262144,5]}}"#,
-        ),
-        (
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"00000001-0002-0003-0004-00000000000"}}"#,
-            r#"{"text":"x","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[1,131075,262144,0]}}"#,
         ),
         (
             r#"{"text":"x","click_event":{"action":"change_page","page":1e10}}"#,
@@ -378,6 +372,18 @@ fn vanilla_json_edge_cases() {
         Text::from_str(&input).unwrap_or_else(|e| panic!("{url}: {e}"));
     }
     for (input, message) in [
+        (
+            r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"1-2-3-4-5"}}"#,
+            "Invalid UUID string: 1-2-3-4-5",
+        ),
+        (
+            r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"100000000-2-3-4-5"}}"#,
+            "Invalid UUID string: 100000000-2-3-4-5",
+        ),
+        (
+            r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"00000001-0002-0003-0004-00000000000"}}"#,
+            "Invalid UUID string: 00000001-0002-0003-0004-00000000000",
+        ),
         (
             r#"{"text":"x","hover_event":{"action":"show_entity","id":"pig","uuid":"-1-2-3-4-5"}}"#,
             "Invalid UUID string: -1-2-3-4-5",

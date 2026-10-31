@@ -12,6 +12,8 @@ workspace = true
 bevy = ["dep:bevy_ecs"]
 
 [dependencies]
+mcrs_minecraft_command_tree.workspace = true
+mcrs_minecraft_game_mode.workspace = true
 bevy_ecs = { workspace = true, optional = true }
 mcrs_minecraft_block.workspace = true
 mcrs_minecraft_dimension.workspace = true
@@ -23,6 +25,7 @@ mcrs_minecraft_text.workspace = true
 mcrs_minecraft_item.workspace = true
 mcrs_minecraft_chunk.workspace = true
 mcrs_minecraft_core.workspace = true
+mcrs_minecraft_keys.workspace = true
 glam.workspace = true
 mcrs_minecraft_nbt.workspace = true
 mcrs_minecraft_wire = { workspace = true, features = ["glam", "uuid", "serde"] }
@@ -37,6 +40,7 @@ derive_more = { workspace = true, features = ["from", "into", "deref", "deref_mu
 flate2.workspace = true
 
 [dev-dependencies]
+mcrs_minecraft_snbt.workspace = true
 mcrs_minecraft_sound.workspace = true
 mcrs_minecraft_world = { workspace = true, features = ["test-support"] }
 criterion = { version = "0.7", features = ["html_reports"] }

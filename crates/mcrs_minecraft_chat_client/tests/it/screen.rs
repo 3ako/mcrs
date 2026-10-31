@@ -1,0 +1,254 @@
+use crate::{Tree, context, source};
+use mcrs_minecraft_chat::normalize;
+use mcrs_minecraft_chat_client::{
+    Anchor, ChatScreen, ClickMode, Closed, EditBox, History, HistoryChange, InputStyle, Key,
+    Outcome, Outgoing, Signing, Step, StyleClick, UnsentDraft, keeps_draft,
+};
+use mcrs_minecraft_protocol::text::ClickEvent;
+
+#[test]
+fn normalization_trims_and_collapses_whitespace() {
+    let long = "a".repeat(300);
+    let accented = "\u{e9}".repeat(300);
+    let emoji = "\u{1f600}".repeat(300);
+    for (input, sent) in [
+        ("  a   b  ", "a b".to_owned()),
+        ("a\tb\u{3000}c", "a b c".to_owned()),
+        ("a\u{a0} b", "a  b".to_owned()),
+        ("\u{a0}hi\u{a0}", "hi".to_owned()),
+        ("\u{1}a\u{1f}", "a".to_owned()),
+        (long.as_str(), "a".repeat(256)),
+        (accented.as_str(), "\u{e9}".repeat(256)),
+        (emoji.as_str(), "\u{1f600}".repeat(256)),
+    ] {
+        let mut out = String::new();
+        normalize(input, &mut out);
+        assert_eq!(out, sent, "{input:?}");
+    }
+}
+
+#[test]
+fn the_input_box_rejects_section_signs_and_control_codes_and_holds_256_characters() {
+    let mut edit = EditBox::default();
+    edit.insert("a\u{a7}b\u{7f}c\nd");
+    assert_eq!(edit.text(), "abcd");
+    edit.set("");
+    edit.insert(&"\u{1f600}".repeat(300));
+    assert_eq!(edit.text().chars().count(), 256);
+}
+
+#[test]
+fn up_and_down_recall_the_history_and_restore_the_typed_line() {
+    let tree = Tree::new().build();
+    let source = source();
+    let cx = context(&tree, &source);
+    let mut history = History::default();
+    history.add("a");
+    history.add("b");
+    let mut screen = ChatScreen::default();
+    screen.open("", InputStyle::Plain, &cx);
+    screen.type_text("c", &cx);
+    let mut seen = Vec::new();
+    for key in [Key::Up, Key::Up, Key::Down, Key::Down] {
+        screen.key(key, &mut history, &cx);
+        seen.push(screen.input().to_owned());
+    }
+    assert_eq!(seen, ["b", "a", "b", "c"]);
+    assert_eq!(screen.key(Key::Down, &mut history, &cx), Outcome::Ignored);
+}
+
+#[test]
+fn commands_outlive_a_disconnect_and_chat_text_does_not() {
+    let mut history = History::from_command_file("/old\n");
+    assert!(!history.add("hi"));
+    assert!(history.add("/help"));
+    assert!(
+        !history.add("/help"),
+        "a repeat of the last command is not added"
+    );
+    history.reset();
+    assert_eq!(
+        (0..history.len())
+            .map(|i| history.get(i).unwrap())
+            .collect::<Vec<_>>(),
+        ["/old", "/help"]
+    );
+    assert_eq!(history.command_file(), "/old\n/help\n");
+}
+
+#[test]
+fn the_history_keeps_the_last_100_inputs_and_the_last_50_commands() {
+    let mut history = History::default();
+    for i in 0..=100 {
+        history.add(&format!("m{i}"));
+    }
+    assert_eq!(
+        (history.len(), history.get(0), history.get(99)),
+        (100, Some("m1"), Some("m100"))
+    );
+
+    let commands: Vec<String> = (0..=50).map(|i| format!("/c{i}")).collect();
+    let last_50: String = commands[1..].iter().map(|c| format!("{c}\n")).collect();
+    let mut history = History::default();
+    for command in &commands {
+        assert!(history.add(command));
+    }
+    assert_eq!(history.command_file(), last_50);
+    let all_51: String = commands.iter().map(|c| format!("{c}\n")).collect();
+    assert_eq!(History::from_command_file(&all_51).command_file(), last_50);
+}
+
+#[test]
+fn enter_sends_the_normalized_input_and_picks_the_packet() {
+    let tree = Tree::new().build();
+    let source = source();
+    let cx = context(&tree, &source);
+    let mut history = History::default();
+    let mut screen = ChatScreen::default();
+    enum Expect {
+        Sent(Option<Outgoing>),
+        Refused,
+    }
+    use Expect::*;
+    let emoji = "\u{1f600}";
+    let sent_unsigned = |line: String| Outgoing::Command {
+        line,
+        signing: Signing::Unsigned,
+    };
+    let rows = [
+        (
+            "  hi  there ".to_owned(),
+            Sent(Some(Outgoing::Chat("hi there".into()))),
+        ),
+        ("/".to_owned(), Sent(Some(sent_unsigned(String::new())))),
+        ("   ".to_owned(), Sent(None)),
+        (
+            emoji.repeat(128),
+            Sent(Some(Outgoing::Chat(emoji.repeat(128)))),
+        ),
+        (emoji.repeat(129), Refused),
+        (emoji.repeat(200), Refused),
+        (
+            format!("/{}", emoji.repeat(300)),
+            Sent(Some(sent_unsigned(emoji.repeat(255)))),
+        ),
+    ];
+    for (typed, expected) in rows {
+        let recalled = history.len();
+        screen.open("", InputStyle::Plain, &cx);
+        screen.type_text(&typed, &cx);
+        let outcome = screen.key(Key::Enter, &mut history, &cx);
+        match expected {
+            Sent(send) => {
+                let Outcome::Closed(Closed::Sent { send: sent, .. }) = outcome else {
+                    panic!("{typed:?}");
+                };
+                assert_eq!(sent, send, "{typed:?}");
+            }
+            Refused => {
+                assert_eq!(outcome, Outcome::Handled, "{typed:?}");
+                assert_eq!(history.len(), recalled, "{typed:?}: history unchanged");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_draft_is_kept_only_when_the_screen_closed_without_a_send() {
+    let sent = Closed::Sent {
+        send: None,
+        history: HistoryChange::Unchanged,
+    };
+    for (input, closed, save, kept) in [
+        ("abc", Some(&Closed::Escape), UnsentDraft::Discard, false),
+        ("abc", Some(&Closed::Escape), UnsentDraft::Save, true),
+        ("abc", Some(&sent), UnsentDraft::Save, false),
+        ("abc", None, UnsentDraft::Discard, true),
+        ("  ", None, UnsentDraft::Save, false),
+    ] {
+        assert_eq!(
+            keeps_draft(input, closed, save),
+            kept,
+            "{input:?} {closed:?} {save:?}"
+        );
+    }
+}
+
+#[test]
+fn backspace_on_a_draft_clears_it() {
+    let tree = Tree::new().build();
+    let source = source();
+    let cx = context(&tree, &source);
+    let mut history = History::default();
+    let mut screen = ChatScreen::default();
+    screen.open("abc", InputStyle::Draft, &cx);
+    screen.key(Key::Backspace { step: Step::Char }, &mut history, &cx);
+    assert_eq!(screen.input(), "");
+    assert!(!screen.is_draft());
+}
+
+#[test]
+fn a_click_on_a_styled_line_inserts_or_suggests_by_modifier() {
+    let suggest: ClickEvent = ClickEvent::SuggestCommand {
+        command: "/help".into(),
+    };
+    let open_url: ClickEvent = ClickEvent::OpenUrl {
+        url: "https://example.org".into(),
+    };
+    let both = StyleClick {
+        insertion: Some("ins"),
+        event: Some(&suggest),
+    };
+    let insertion_only = StyleClick {
+        insertion: Some("ins"),
+        event: None,
+    };
+    let suggest_only = StyleClick {
+        insertion: None,
+        event: Some(&suggest),
+    };
+    let other_event = StyleClick {
+        insertion: Some("ins"),
+        event: Some(&open_url),
+    };
+    for (style, mode, input, outcome) in [
+        (both, ClickMode::Shift, "abins", Outcome::Handled),
+        (both, ClickMode::Plain, "/help", Outcome::Handled),
+        (insertion_only, ClickMode::Shift, "abins", Outcome::Handled),
+        (insertion_only, ClickMode::Plain, "ab", Outcome::Ignored),
+        (suggest_only, ClickMode::Shift, "ab", Outcome::Ignored),
+        (suggest_only, ClickMode::Plain, "/help", Outcome::Handled),
+        (other_event, ClickMode::Plain, "ab", Outcome::Ignored),
+        (
+            StyleClick::default(),
+            ClickMode::Shift,
+            "ab",
+            Outcome::Ignored,
+        ),
+        (
+            StyleClick::default(),
+            ClickMode::Plain,
+            "ab",
+            Outcome::Ignored,
+        ),
+    ] {
+        let tree = Tree::new().build();
+        let source = source();
+        let cx = context(&tree, &source);
+        let mut screen = ChatScreen::default();
+        screen.open("ab", InputStyle::Plain, &cx);
+        screen.key(
+            Key::End {
+                anchor: Anchor::Move,
+            },
+            &mut History::default(),
+            &cx,
+        );
+        assert_eq!(
+            screen.click_style(style, mode, &cx),
+            outcome,
+            "{style:?} {mode:?}"
+        );
+        assert_eq!(screen.input(), input, "{style:?} {mode:?}");
+    }
+}

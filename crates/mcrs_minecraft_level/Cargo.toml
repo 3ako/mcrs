@@ -21,6 +21,7 @@ bevy_platform.workspace = true
 bevy_time.workspace = true
 flume.workspace = true
 indexmap.workspace = true
+mcrs_minecraft_block_entity.workspace = true
 mcrs_minecraft_chunk = { workspace = true, features = ["bevy"] }
 mcrs_minecraft_core = { workspace = true, features = ["bevy"] }
 mcrs_minecraft_simulation.workspace = true

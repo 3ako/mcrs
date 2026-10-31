@@ -1,0 +1,15 @@
+[package]
+name = "mcrs_minecraft_chat"
+description = "The chat rules that the client and the server share: the characters a message may hold, its length limit and its normal form"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+mcrs_command.workspace = true

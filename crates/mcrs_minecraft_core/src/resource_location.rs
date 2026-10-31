@@ -59,6 +59,23 @@ impl<S: AsRef<str>> ResourceLocation<S> {
 
 const DEFAULT_NAMESPACE: &str = "minecraft";
 
+/// The namespace and the path of `text`; a missing or empty namespace is `minecraft`.
+fn split_namespace(text: &str) -> (&str, &str) {
+    match text.split_once(':') {
+        Some(("", path)) => (DEFAULT_NAMESPACE, path),
+        Some(parts) => parts,
+        None => (DEFAULT_NAMESPACE, text),
+    }
+}
+
+/// The namespace and the path of `text`, or `None` when either has a character an identifier
+/// does not allow.
+pub fn parse_parts(text: &str) -> Option<(&str, &str)> {
+    let (namespace, path) = split_namespace(text);
+    (valid_namespace(namespace.as_bytes()) && valid(path.as_bytes(), true))
+        .then_some((namespace, path))
+}
+
 const fn valid_namespace(bytes: &[u8]) -> bool {
     !matches!(bytes, [b'.', b'.']) && valid(bytes, false)
 }
@@ -102,11 +119,10 @@ struct Split<'t> {
 }
 
 fn split(text: &str) -> Result<Split<'_>, InvalidResourceLocation> {
-    let (namespace, path, canonical) = match text.split_once(':') {
-        Some(("", path)) => (DEFAULT_NAMESPACE, path, false),
-        Some((namespace, path)) => (namespace, path, true),
-        None => (DEFAULT_NAMESPACE, text, false),
-    };
+    let canonical = text
+        .split_once(':')
+        .is_some_and(|(namespace, _)| !namespace.is_empty());
+    let (namespace, path) = split_namespace(text);
     check(namespace, path).map_err(|reason| InvalidResourceLocation {
         input: text.to_owned(),
         reason,

@@ -22,6 +22,8 @@ pub mod voxel_shape;
 
 mod block_state_id;
 mod id;
+mod look;
+mod look_anchor;
 mod wire;
 
 pub use block_pos::BlockPos;
@@ -32,6 +34,8 @@ pub use direction::{Axis, Direction, DirectionSet, dist_manhattan};
 pub use heightmap::HeightmapName;
 pub use id::{Id, NarrowError, TagId};
 pub use local_pos::LocalPos;
+pub use look::Look;
+pub use look_anchor::LookAnchor;
 pub use mcrs_minecraft_wire::Bounded;
 pub use mirror::Mirror;
 pub use quart_pos::QuartPos;

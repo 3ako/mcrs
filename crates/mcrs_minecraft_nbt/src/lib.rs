@@ -20,9 +20,6 @@ pub mod compound;
 pub mod deserializer;
 pub mod nbt_compress;
 pub mod serializer;
-pub mod snbt;
-#[cfg(test)]
-mod snbt_golden;
 pub mod tag;
 pub mod tag_deserializer;
 pub mod tag_serializer;
@@ -85,8 +82,6 @@ pub enum Error {
     NoRootCompound(u8),
     #[error("The root tag is TAG_End")]
     EndRoot,
-    #[error("SNBT syntax error at {position}: {message}")]
-    Snbt { position: usize, message: String },
     #[error("Encountered an unknown NBT tag id: {0}.")]
     UnknownTagId(u8),
     #[error("Failed to Cesu 8 Decode")]
@@ -745,10 +740,6 @@ mod test {
 
     #[test]
     fn json_numbers_are_typed_like_json_ops() {
-        for case in &crate::snbt_golden::GOLDEN.json_typing {
-            let tag: tag::NbtTag = serde_json::from_str(&case.json).unwrap();
-            assert_eq!(crate::snbt::write(&tag), case.tag, "{}", case.json);
-        }
         let nbt_long: tag::NbtTag =
             from_bytes_unnamed(Cursor::new(unhex("040000000000000001"))).unwrap();
         assert_eq!(nbt_long, tag::NbtTag::Long(1));

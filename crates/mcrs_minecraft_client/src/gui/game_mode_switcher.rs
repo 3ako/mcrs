@@ -1,17 +1,17 @@
 use bevy::math::IVec2;
 use bevy::prelude::*;
-use bevy::time::Real;
 use bevy::window::{CursorOptions, PrimaryWindow};
+use mcrs_minecraft_game_mode::GameMode;
 use mcrs_minecraft_network::client::{ClientConnection, ClientNetworkSystems};
-use mcrs_minecraft_protocol::GameMode;
 use mcrs_minecraft_protocol::WritePacket;
 use mcrs_minecraft_protocol::packets::game::serverbound::ServerboundChangeGameMode;
+use mcrs_minecraft_protocol::text::{Color, IntoText, Text};
 
-use super::debug_chat::DebugChat;
 use super::debug_screen_overlay::{DebugModifier, toggle_overlay};
 use super::font::{Span, draw_centered_text};
 use super::language::Language;
 use super::scene::{GuiAtlas, GuiQuad, GuiScene, sprite};
+use crate::chat::ChatMessage;
 use crate::game_mode::{LocalGameMode, PermissionLevel};
 use crate::player::Player;
 use crate::screen::{Screen, grab};
@@ -31,15 +31,6 @@ const SLOT_AREA_PADDED: i32 = 31;
 const ALL_SLOTS_WIDTH: i32 = ICONS.len() as i32 * SLOT_AREA_PADDED - 5;
 const WHITE: u32 = 0xFFFF_FFFF;
 const AQUA: u32 = 0xFF55_FFFF;
-
-fn name_key(mode: GameMode) -> &'static str {
-    match mode {
-        GameMode::Creative => "gameMode.creative",
-        GameMode::Survival => "gameMode.survival",
-        GameMode::Adventure => "gameMode.adventure",
-        GameMode::Spectator => "gameMode.spectator",
-    }
-}
 
 pub fn next(mode: GameMode) -> GameMode {
     let at = ICONS.iter().position(|&icon| icon == mode).unwrap_or(0);
@@ -74,11 +65,23 @@ pub fn mode_to_send(
     (selected != mode.current && *permission? >= PermissionLevel::GAMEMASTERS).then_some(selected)
 }
 
+/// A debug key's report: the yellow bold prefix, then the translation of `key`.
+fn debug_feedback(key: &'static str) -> Text {
+    Text::text("")
+        .add_child(
+            Text::translate("debug.prefix", vec![])
+                .color(Color::YELLOW)
+                .bold(),
+        )
+        .add_child(" ".into_text())
+        .add_child(Text::translate(key, vec![]))
+}
+
 pub struct GameModeSwitcherPlugin;
 
 impl Plugin for GameModeSwitcherPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DebugChat>().add_systems(
+        app.add_message::<ChatMessage>().add_systems(
             Update,
             switch_game_mode
                 .after(ClientNetworkSystems::Receive)
@@ -88,10 +91,6 @@ impl Plugin for GameModeSwitcherPlugin {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a Bevy system: each resource and query is its own parameter so the scheduler sees the access"
-)]
 fn switch_game_mode(
     keys: Res<ButtonInput<KeyCode>>,
     mut screen: ResMut<Screen>,
@@ -99,9 +98,7 @@ fn switch_game_mode(
     player: Query<(Option<&LocalGameMode>, Option<&PermissionLevel>), With<Player>>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
     connection: Option<Single<&mut ClientConnection>>,
-    language: Option<Res<Language>>,
-    mut chat: ResMut<DebugChat>,
-    time: Res<Time<Real>>,
+    mut chat: MessageWriter<ChatMessage>,
 ) {
     let Ok((mode, permission)) = player.single() else {
         return;
@@ -131,9 +128,7 @@ fn switch_game_mode(
                     grab(&mut cursor, false);
                 }
                 None => {
-                    if let Some(language) = language {
-                        chat.feedback(&language, "debug.gamemodes.error", time.elapsed());
-                    }
+                    chat.write(ChatMessage::system(debug_feedback("debug.gamemodes.error")));
                 }
             }
         }
@@ -179,7 +174,7 @@ fn switcher(
         IVec2::new(125, 75),
         "container/gamemode_switcher",
     ));
-    let name = [Span::new(language.get(name_key(selected)), WHITE)];
+    let name = [Span::new(language.get(selected.translation_key()), WHITE)];
     draw_centered_text(font, cx, cy - SLOT_AREA_PADDED - 20, &name, out);
     let key = vec![Span::new(language.get(SWITCH_KEY_NAME), AQUA)];
     let hint = language.translate("debug.gamemodes.select_next", WHITE, &[key]);
@@ -217,9 +212,7 @@ mod tests {
             .init_resource::<Screen>()
             .init_resource::<DebugModifier>()
             .init_resource::<DebugOverlay>()
-            .init_resource::<DebugChat>()
-            .init_resource::<Time<Real>>()
-            .insert_resource(Language::default())
+            .add_message::<ChatMessage>()
             .add_systems(Update, (switch_game_mode, toggle_overlay).chain());
         app.world_mut().spawn((
             Player,
@@ -304,7 +297,7 @@ mod tests {
         release(&mut app, KeyCode::F3);
         assert_eq!(*app.world().resource::<Screen>(), Screen::None);
         assert!(!overlay(&app));
-        assert!(app.world().resource::<DebugChat>().has_messages());
+        assert!(!app.world().resource::<Messages<ChatMessage>>().is_empty());
     }
 
     fn mode(current: GameMode, previous: Option<GameMode>) -> LocalGameMode {

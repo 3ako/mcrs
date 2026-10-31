@@ -109,6 +109,11 @@ impl Knobs {
         self.knob("USERNAME").unwrap_or("Player").to_owned()
     }
 
+    /// `HISTORY=<file>` is where the command history is kept.
+    pub fn command_history(&self) -> Option<std::path::PathBuf> {
+        self.knob("HISTORY").map(std::path::PathBuf::from)
+    }
+
     pub fn server(&self) -> Option<&str> {
         self.knob("SERVER")
     }
@@ -207,18 +212,15 @@ impl Knobs {
         let Some(mode) = self.knob("DEFAULT_GAMEMODE") else {
             return GameMode::Creative;
         };
-        match mode.trim().to_ascii_lowercase().as_str() {
-            "survival" => GameMode::Survival,
-            "creative" => GameMode::Creative,
-            "adventure" => GameMode::Adventure,
-            "spectator" => GameMode::Spectator,
-            other => {
+        mode.trim()
+            .to_ascii_lowercase()
+            .parse()
+            .unwrap_or_else(|_| {
                 eprintln!(
-                    "MCRS_DEFAULT_GAMEMODE={other} is not a game mode; defaulting to creative"
+                    "MCRS_DEFAULT_GAMEMODE={mode} is not a game mode; defaulting to creative"
                 );
                 GameMode::Creative
-            }
-        }
+            })
     }
 
     /// `SLOW_CHUNK_MS` is the latency above which the integrated server logs a column.

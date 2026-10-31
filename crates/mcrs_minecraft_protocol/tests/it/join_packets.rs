@@ -7,15 +7,17 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use mcrs_minecraft_core::Id;
+use mcrs_minecraft_core::LookAnchor;
 use mcrs_minecraft_core::{BlockPos, ResourceKey, ResourceLocation, VERSION};
 use mcrs_minecraft_dimension::{Dimension, DimensionType};
+use mcrs_minecraft_game_mode::GameMode;
+use mcrs_minecraft_game_mode::OptGameMode;
 use mcrs_minecraft_protocol::entity::player::PlayerSpawnInfo;
-use mcrs_minecraft_protocol::game_mode::OptGameMode;
 use mcrs_minecraft_protocol::handshake::Intent;
 use mcrs_minecraft_protocol::packets::common::{Brand, clientbound, serverbound};
 use mcrs_minecraft_protocol::packets::game::clientbound::*;
 use mcrs_minecraft_protocol::packets::intent::serverbound::ServerboundHandshake;
-use mcrs_minecraft_protocol::{Bounded, Decode, Encode, GameMode, GlobalPos, RawBytes, VarInt};
+use mcrs_minecraft_protocol::{Bounded, Decode, Encode, GlobalPos, RawBytes, VarInt};
 
 static GOLDEN: LazyLock<String> =
     LazyLock::new(|| mcrs_minecraft_fixtures::fixture("join_packets").text());
@@ -293,4 +295,80 @@ fn an_unknown_channel_body_is_bounded_by_the_direction() {
     assert!(
         clientbound::Payload::decode(&mut &frame(clientbound::MAX_PAYLOAD_SIZE + 1)[..]).is_err()
     );
+}
+
+#[test]
+fn abilities_and_look_at_follow_their_field_layouts() {
+    let survival = ClientboundPlayerAbilities {
+        invulnerable: false,
+        flying: false,
+        may_fly: false,
+        instant_build: false,
+        flying_speed: 0.05,
+        walking_speed: 0.1,
+    };
+    let bytes = crate::common::hex("003d4ccccd3dcccccd");
+    assert_eq!(encoded(&survival), bytes);
+    let single_flags = [
+        (
+            0x01,
+            ClientboundPlayerAbilities {
+                invulnerable: true,
+                ..survival
+            },
+        ),
+        (
+            0x02,
+            ClientboundPlayerAbilities {
+                flying: true,
+                ..survival
+            },
+        ),
+        (
+            0x04,
+            ClientboundPlayerAbilities {
+                may_fly: true,
+                ..survival
+            },
+        ),
+        (
+            0x08,
+            ClientboundPlayerAbilities {
+                instant_build: true,
+                ..survival
+            },
+        ),
+    ];
+    for (flag, abilities) in single_flags {
+        let mut bytes = bytes.clone();
+        bytes[0] = flag;
+        assert_eq!(encoded(&abilities), bytes, "{flag:#04x}");
+        assert_eq!(
+            ClientboundPlayerAbilities::decode(&mut &bytes[..]).unwrap(),
+            abilities,
+            "{flag:#04x}"
+        );
+    }
+
+    let at_cow = ClientboundPlayerLookAt {
+        from: LookAnchor::Feet,
+        target: glam::DVec3::new(1.0, 2.0, 3.0),
+        entity: Some(LookAtEntity {
+            id: VarInt(5),
+            anchor: LookAnchor::Eyes,
+        }),
+    };
+    let mut expected = vec![0];
+    for value in [1.0f64, 2.0, 3.0] {
+        expected.extend(value.to_be_bytes());
+    }
+    expected.extend([1, 5, 1]);
+    assert_eq!(encoded(&at_cow), expected);
+    let at_point = ClientboundPlayerLookAt {
+        from: LookAnchor::Eyes,
+        entity: None,
+        ..at_cow
+    };
+    assert_eq!(encoded(&at_point)[0], 1);
+    assert_eq!(encoded(&at_point).last(), Some(&0));
 }

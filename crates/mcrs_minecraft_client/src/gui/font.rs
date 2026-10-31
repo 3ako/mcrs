@@ -125,6 +125,11 @@ impl Font {
             .flat_map(|span| span.text.chars().map(|ch| self.advance(ch, span.bold)))
             .sum()
     }
+
+    /// The width of `text` in the regular weight.
+    pub fn str_width(&self, text: &str) -> i32 {
+        text.chars().map(|ch| self.advance(ch, false)).sum()
+    }
 }
 
 fn normalized(id: &str) -> String {
@@ -132,11 +137,24 @@ fn normalized(id: &str) -> String {
     format!("{namespace}:{path}")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The click event of a span.
+pub type ClickEvent = mcrs_minecraft_protocol::text::ClickEvent<
+    mcrs_minecraft_item::Template<mcrs_minecraft_registries::Named>,
+>;
+
+/// The hover event of a span.
+pub type Hover = mcrs_minecraft_protocol::text::HoverEvent<
+    mcrs_minecraft_item::Template<mcrs_minecraft_registries::Named>,
+>;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Span {
     pub text: String,
     pub color: u32,
     pub bold: bool,
+    pub hover: Option<Box<Hover>>,
+    pub click: Option<Box<ClickEvent>>,
+    pub insertion: Option<Box<str>>,
 }
 
 impl Span {
@@ -145,6 +163,9 @@ impl Span {
             text: text.into(),
             color,
             bold: false,
+            hover: None,
+            click: None,
+            insertion: None,
         }
     }
 
@@ -160,24 +181,80 @@ pub fn shadow_color(color: u32) -> u32 {
 /// Left to right from `origin`, a shadow one pixel down and right under every
 /// glyph; bold strikes each glyph again one pixel to the right.
 pub fn draw_text(font: &Font, origin: IVec2, spans: &[Span], out: &mut Vec<GuiQuad>) {
+    draw_tinted_text(font, origin, spans, |color| color, out);
+}
+
+/// Draws `spans` as [`draw_text`] does, with each colour passed through `tint`.
+pub fn draw_tinted_text(
+    font: &Font,
+    origin: IVec2,
+    spans: &[Span],
+    tint: impl Fn(u32) -> u32,
+    out: &mut Vec<GuiQuad>,
+) {
+    let mut x = origin.x;
+    for span in spans {
+        x = draw_str(
+            font,
+            IVec2::new(x, origin.y),
+            &span.text,
+            tint(span.color),
+            span.bold,
+            out,
+        );
+    }
+}
+
+/// Draws one run as [`draw_text`] does a span and returns the x where the next run starts.
+pub fn draw_str(
+    font: &Font,
+    origin: IVec2,
+    text: &str,
+    color: u32,
+    bold: bool,
+    out: &mut Vec<GuiQuad>,
+) -> i32 {
+    let mut x = origin.x;
+    for ch in text.chars() {
+        if font.glyph(ch).is_some() && !font.spaces.contains_key(&ch) {
+            let strikes = if bold { 2 } else { 1 };
+            for (offset, color) in [(1, shadow_color(color)), (0, color)] {
+                for strike in 0..strikes {
+                    out.push(GuiQuad::Glyph {
+                        origin: IVec2::new(x + offset + strike, origin.y + offset),
+                        glyph: ch,
+                        color,
+                    });
+                }
+            }
+        }
+        x += font.advance(ch, bold);
+    }
+    x
+}
+
+/// The span of the glyph whose hover area holds `point`, for text drawn at `origin`. With this font
+/// every glyph covers its advance and 9 units down.
+pub fn span_at<'s>(
+    font: &Font,
+    origin: IVec2,
+    spans: &'s [Span],
+    point: IVec2,
+) -> Option<&'s Span> {
+    if point.y < origin.y || point.y >= origin.y + 9 {
+        return None;
+    }
     let mut x = origin.x;
     for span in spans {
         for ch in span.text.chars() {
-            if font.glyph(ch).is_some() && !font.spaces.contains_key(&ch) {
-                let strikes = if span.bold { 2 } else { 1 };
-                for (offset, color) in [(1, shadow_color(span.color)), (0, span.color)] {
-                    for strike in 0..strikes {
-                        out.push(GuiQuad::Glyph {
-                            origin: IVec2::new(x + offset + strike, origin.y + offset),
-                            glyph: ch,
-                            color,
-                        });
-                    }
-                }
+            let right = x + font.advance(ch, span.bold);
+            if x <= point.x && point.x < right {
+                return Some(span);
             }
-            x += font.advance(ch, span.bold);
+            x = right;
         }
     }
+    None
 }
 
 pub fn draw_centered_text(

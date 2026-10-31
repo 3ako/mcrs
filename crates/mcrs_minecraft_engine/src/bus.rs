@@ -1,19 +1,22 @@
+use crate::client_info::ClientInfo;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::message::Message;
 use bevy_math::{DVec3, Vec2};
 use bytes::Bytes;
-use mcrs_minecraft_core::{BlockPos, ColumnPos, ResourceKey};
+use mcrs_minecraft_core::{ColumnPos, ResourceKey};
+use mcrs_minecraft_game_mode::GameMode;
 use mcrs_minecraft_level::session::PlayerSession;
 use mcrs_minecraft_network::event::Trigger;
-use mcrs_minecraft_protocol::GameMode;
 use mcrs_minecraft_protocol::VarInt;
 use mcrs_minecraft_protocol::chunk::{ChunkDataBlockEntity, LightData};
 use mcrs_minecraft_protocol::packets::game::clientbound::{
     ClientboundAddEntity, ClientboundBlockUpdate, ClientboundChunkBatchFinished,
-    ClientboundChunkBatchStart, ClientboundChunkCacheRadius, ClientboundEntityEvent,
-    ClientboundEntityPositionSync, ClientboundForgetLevelChunk, ClientboundGameEvent,
-    ClientboundLightUpdate, ClientboundLogin, ClientboundPlayerPosition, ClientboundRemoveEntities,
-    ClientboundSetChunkCacheCenter, ClientboundSystemChatPacket,
+    ClientboundChunkBatchStart, ClientboundChunkCacheRadius, ClientboundCommandSuggestions,
+    ClientboundEntityEvent, ClientboundEntityPositionSync, ClientboundForgetLevelChunk,
+    ClientboundGameEvent, ClientboundLightUpdate, ClientboundLogin, ClientboundPlayerAbilities,
+    ClientboundPlayerLookAt, ClientboundPlayerPosition, ClientboundRemoveEntities,
+    ClientboundRespawn, ClientboundSetChunkCacheCenter, ClientboundSetTime,
+    ClientboundSystemChatPacket,
 };
 use mcrs_minecraft_protocol::uuid::Uuid;
 use smallvec::SmallVec;
@@ -95,8 +98,13 @@ pub enum PacketPriority {
 }
 
 pub fn to(anchor: Entity, data: PacketPayload) -> OutboundPlayerPacket {
+    to_target(PacketTarget::SinglePlayer(anchor), data)
+}
+
+/// A packet for `target` at the normal priority, not yet stamped with a session.
+pub fn to_target(target: PacketTarget, data: PacketPayload) -> OutboundPlayerPacket {
     OutboundPlayerPacket {
-        target: PacketTarget::SinglePlayer(anchor),
+        target,
         priority: PacketPriority::Normal,
         data,
         session: PlayerSession(0),
@@ -138,6 +146,8 @@ pub enum PacketPayload {
     PlayerLeftView(ClientboundRemoveEntities),
     EntityPosSync(ClientboundEntityPositionSync),
     PlayerLogin(ClientboundLogin),
+    /// Moves the client to another dimension; it keeps its player.
+    Respawn(ClientboundRespawn),
     /// The `ClientboundEntityEvent` that tells a client its own operator level.
     OpLevelEntityEvent(ClientboundEntityEvent),
     /// Sets the client's chunk-load origin. A vanilla 26.1.2 client will not
@@ -151,8 +161,14 @@ pub enum PacketPayload {
         entries: Vec<PlayerInfoEntry>,
     },
     PlayerPosition(ClientboundPlayerPosition),
+    PlayerLookAt(ClientboundPlayerLookAt),
+    PlayerAbilities(ClientboundPlayerAbilities),
     SystemChat(ClientboundSystemChatPacket),
     GameEvent(ClientboundGameEvent),
+    /// The `commands` packet with its id, encoded once for every player of one command level.
+    Commands(Bytes),
+    CommandSuggestions(ClientboundCommandSuggestions<'static>),
+    SetTime(ClientboundSetTime),
 }
 
 /// Owned player-list entry for use inside `PacketPayload::PlayerInfoUpdate`.
@@ -171,79 +187,13 @@ pub struct TestPayload {
     pub seq: u32,
 }
 
-/// Persistent-only player state snapshot used by cross-dim transfer.
-///
-/// Current shape carries the minimal viable fields (uuid + username +
-/// position + rotation). The full transfer contract (advancements,
-/// statistics, inventory, health, game_mode, experience) requires types
-/// owned by `MinecraftEntityPlugin`, which remains host-side; pulling
-/// those types into this module is out of scope for now.
+/// The state of a joining player that the host hands to the dimension that spawns it.
 #[derive(Clone, Debug)]
 pub struct PlayerTransferSnapshot {
     pub uuid: Uuid,
     pub username: String,
     pub position: DVec3,
     pub rotation: Vec2,
-    pub view_distance: u8,
-}
-
-/// Generic move payload.  The `Player` variant carries only the minimal
-/// identity the target dim needs to spawn a fresh default entity and relink
-/// the connection.  `NonPlayer` carries a kind tag; both slots are shaped so
-/// a future faithful-snapshot field is an obvious addition rather than a
-/// structural rewrite.
-///
-/// `PlayerTransferSnapshot` is NOT reused here — it carries position/rotation
-/// which arrival resolution overrides, so it is the wrong shape for this role.
-#[derive(Clone, Debug)]
-pub enum MovePayload {
-    Player {
-        uuid: Uuid,
-        username: String,
-    },
-    NonPlayer {
-        kind: mcrs_minecraft_entity::keys::EntityType,
-    },
-}
-
-/// Positional and contextual input the target dim needs to resolve the arrival
-/// landing point.  The MainWorld forwards this opaquely — only the target
-/// DimWorld pattern-matches on it.  The carried position is an input to
-/// resolution, not the authoritative spawn position.
-#[derive(Clone, Debug)]
-pub enum ArrivalCause {
-    /// Player crossed a nether portal; target resolves a /8-scaled landing.
-    NetherPortal { source_pos: BlockPos },
-    /// Player arrived at the End; target creates a 5×5 obsidian platform.
-    EndPlatform,
-    /// Exact-position respawn (e.g. /tp or death respawn at a fixed point).
-    ExactRespawn { pos: DVec3 },
-    /// Command teleport (/tp player dim x y z).
-    CommandTeleport { pos: DVec3 },
-}
-
-/// Forwarded from `ToDim::SpawnEntity` into the target sub-app message bus.
-/// The arrival systems read this to spawn the incoming entity and resolve its
-/// landing position.
-#[derive(Message, Clone, Debug)]
-pub struct InboundEntitySpawn {
-    pub move_id: mcrs_minecraft_level::session::MoveId,
-    pub epoch: u32,
-    pub cause: ArrivalCause,
-    pub payload: MovePayload,
-    pub player: Option<mcrs_minecraft_level::session::PlayerSession>,
-}
-
-/// Forwarded from `ToDim::ConfirmMove` into the source sub-app message bus.
-/// The source-dim confirm system despawns the hidden in-transit entity.
-#[derive(Message, Clone, Debug)]
-pub struct InboundConfirmMove {
-    pub move_id: mcrs_minecraft_level::session::MoveId,
-}
-
-/// Forwarded from `ToDim::RollbackMove` into the source sub-app message bus.
-/// The source-dim rollback system removes `InTransit` so the entity reappears.
-#[derive(Message, Clone, Debug)]
-pub struct InboundRollbackMove {
-    pub move_id: mcrs_minecraft_level::session::MoveId,
+    /// What the client said about itself before it joined; absent when it said nothing.
+    pub client_info: Option<ClientInfo>,
 }

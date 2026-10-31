@@ -1,8 +1,14 @@
-use crate::world::entity::player::ability::PlayerOpLevel;
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::prelude::{MessageWriter, On, Query, Res, Resource, With};
+use mcrs_minecraft_command_engine::{OperatorBroadcast, system_chat};
+use mcrs_minecraft_engine::ability::PlayerOpLevel;
+use mcrs_minecraft_engine::bus::{OutboundPlayerPacket, PacketTarget, to_target};
+use mcrs_minecraft_engine::session::GameProfile;
+use mcrs_minecraft_level::session::Session;
 use mcrs_minecraft_protocol::uuid::Uuid;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Deserializer, Serialize};
+use smallvec::SmallVec;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -56,9 +62,14 @@ impl OpList {
     }
 
     pub fn read(path: &Path) -> Result<Self, OpListError> {
+        Self::read_entries(path).map(Self::new)
+    }
+
+    /// The entries of the ops file at `path`; none when the file does not exist.
+    pub fn read_entries(path: &Path) -> Result<Vec<OpListEntry>, OpListError> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
-            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Self::default()),
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             Err(source) => {
                 return Err(OpListError::Io {
                     path: path.to_owned(),
@@ -66,12 +77,10 @@ impl OpList {
                 });
             }
         };
-        let entries: Vec<OpListEntry> =
-            serde_json::from_slice(&bytes).map_err(|source| OpListError::Malformed {
-                path: path.to_owned(),
-                source,
-            })?;
-        Ok(Self::new(entries))
+        serde_json::from_slice(&bytes).map_err(|source| OpListError::Malformed {
+            path: path.to_owned(),
+            source,
+        })
     }
 
     pub fn get(&self, uuid: &Uuid) -> Option<&OpListEntry> {
@@ -82,6 +91,35 @@ impl OpList {
         self.get(uuid)
             .map_or(default.0, |entry| PlayerOpLevel(entry.level))
     }
+}
+
+/// Delivers an admin message from any dimension to every online operator but its source. The
+/// host holds each session's profile and the operator list, so the set is read here when a
+/// message arrives.
+pub fn broadcast_to_operators(
+    broadcast: On<OperatorBroadcast>,
+    sessions: Query<(Entity, &GameProfile), With<Session>>,
+    ops: Option<Res<OpList>>,
+    mut writer: MessageWriter<OutboundPlayerPacket>,
+) {
+    let Some(ops) = ops else {
+        return;
+    };
+    let operators: SmallVec<[Entity; 8]> = sessions
+        .iter()
+        .filter(|&(anchor, profile)| anchor != broadcast.source && ops.get(&profile.id).is_some())
+        .map(|(anchor, _)| anchor)
+        .collect();
+    if operators.is_empty() {
+        return;
+    }
+    let Ok(message) = mcrs_minecraft_protocol::text::named(&broadcast.message) else {
+        return;
+    };
+    writer.write(to_target(
+        PacketTarget::PlayerSet(operators),
+        system_chat(message),
+    ));
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 
 use crate::deserializer::NbtReadHelper;
 use crate::serializer::WriteAdaptor;
@@ -63,6 +62,15 @@ impl NbtCompound {
         }
         w.write_u8_be(END_ID)?;
         Ok(())
+    }
+
+    /// [`NbtTag::matches`] for a compound: `actual` can have more keys.
+    pub fn matches(&self, actual: &NbtCompound) -> bool {
+        self.child_tags.iter().all(|(key, expected)| {
+            actual
+                .get(key)
+                .is_some_and(|actual| expected.matches(actual))
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -240,17 +248,5 @@ impl<'de> Deserialize<'de> for NbtCompound {
 impl From<NbtCompound> for NbtTag {
     fn from(value: NbtCompound) -> Self {
         NbtTag::Compound(value)
-    }
-}
-
-impl Display for NbtCompound {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&crate::snbt::write_compound(self))
-    }
-}
-
-impl Display for NbtTag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&crate::snbt::write(self))
     }
 }

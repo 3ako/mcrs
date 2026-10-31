@@ -21,20 +21,22 @@
 pub mod advancement;
 pub mod block;
 mod byte_angle;
+pub mod chat;
 pub mod chunk;
+mod command_suggestion;
 pub mod decode;
 mod difficulty;
 pub mod encode;
 pub mod entity;
 pub mod frame;
 pub mod game_event;
-pub mod game_mode;
 mod hand;
 pub mod handshake;
 pub mod item;
 pub mod light_codec;
 mod lp_vec3;
 pub mod packets;
+mod plain_text;
 mod pos;
 pub mod profile;
 mod raw;
@@ -50,6 +52,8 @@ pub mod text {
     pub use mcrs_minecraft_text::*;
 
     pub type Text = mcrs_minecraft_item::Text<mcrs_minecraft_registries::Named>;
+
+    pub use crate::plain_text::{PlainTextError, named};
 }
 
 use std::io::Write;
@@ -57,12 +61,12 @@ use std::io::Write;
 pub use byte_angle::ByteAngle;
 pub use chunk::ChunkData;
 pub use chunk::LightData;
+pub use command_suggestion::CommandSuggestion;
 pub use decode::PacketDecoder;
 use derive_more::{From, Into};
 pub use difficulty::Difficulty;
 pub use encode::{PacketEncoder, WritePacket};
 pub use game_event::GameEventKind;
-pub use game_mode::GameMode;
 pub use hand::Hand;
 pub use item::ProtoStack;
 pub use lp_vec3::LpVec3;
@@ -71,7 +75,6 @@ pub use mcrs_minecraft_item::component::GlobalPos;
 pub use mcrs_minecraft_wire::{
     Bounded, Context, Decode, Encode, Error, ErrorKind, RawBytes, Result, VarInt, VarLong,
 };
-pub use pos::Look;
 pub use pos::MoveFlags;
 pub use pos::Position;
 pub use raw::EncodedBody;

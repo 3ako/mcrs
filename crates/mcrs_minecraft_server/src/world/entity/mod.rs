@@ -1,4 +1,4 @@
-use crate::world::entity::player::{DimPlayerPlugin, HostAnchor};
+use crate::world::entity::player::DimPlayerPlugin;
 use bevy_app::{App, FixedPreUpdate, Plugin};
 use bevy_ecs::bundle::Bundle;
 use bevy_ecs::component::Component;
@@ -11,10 +11,11 @@ use bevy_ecs::system::Query;
 use derive_more::{Deref, DerefMut};
 use mcrs_minecraft_engine::bus::to;
 use mcrs_minecraft_engine::bus::{InboundPlayerPacket, OutboundPlayerPacket, PacketPayload};
+use mcrs_minecraft_engine::network_id::network_id;
+use mcrs_minecraft_engine::session::HostAnchor;
 use mcrs_minecraft_level::entity::physics::{OldTransform, Transform};
 use mcrs_minecraft_level::entity::{EntityNetworkSyncEvent, EntityPlugin};
 use mcrs_minecraft_level::world::dimension::InDimension;
-use mcrs_minecraft_protocol::Look;
 use mcrs_minecraft_protocol::VarInt;
 use mcrs_minecraft_protocol::packets::game::clientbound::ClientboundEntityPositionSync;
 use mcrs_minecraft_protocol::packets::game::clientbound::PositionPath;
@@ -105,21 +106,23 @@ pub fn entity_pos_sync(
     // the type system: this observer must only fire on entities that
     // carry both transform components. The actual delta computation
     // moves to the bridge tier where per-player wire state lives.
-    entity_data: Query<&Transform, With<OldTransform>>,
+    entity_data: Query<(&Transform, Option<&HostAnchor>), With<OldTransform>>,
+    viewers: Query<&HostAnchor>,
     mut packet_writer: MessageWriter<OutboundPlayerPacket>,
 ) {
-    let Ok(transform) = entity_data.get(event.entity) else {
+    let Ok((transform, anchor)) = entity_data.get(event.entity) else {
         return;
     };
+    let Ok(&HostAnchor(viewer)) = viewers.get(event.player) else {
+        return;
+    };
+    let entity_id = network_id(event.entity, anchor);
     packet_writer.write(to(
-        event.player,
+        viewer,
         PacketPayload::EntityPosSync(ClientboundEntityPositionSync {
-            entity_id: VarInt(event.entity.index_u32() as i32),
+            entity_id: VarInt(entity_id),
             position: PositionPath::Linear(transform.translation),
-            look: Look {
-                yaw: transform.rotation.yaw(),
-                pitch: transform.rotation.pitch(),
-            },
+            look: transform.rotation.into(),
             on_ground: true,
         }),
     ));

@@ -18,7 +18,5 @@ mcrs_minecraft_wire.workspace = true
 cesu8 = "1.1"
 flate2 = "1.1"
 
-
 [dev-dependencies]
 serde_json.workspace = true
-mcrs_minecraft_fixtures.workspace = true

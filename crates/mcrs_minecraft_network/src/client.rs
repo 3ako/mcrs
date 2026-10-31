@@ -15,6 +15,7 @@ use bevy_ecs::world::World;
 use bevy_math::DVec3;
 use bytes::Bytes;
 use mcrs_minecraft_core::Id;
+use mcrs_minecraft_core::Look;
 use mcrs_minecraft_core::{ResourceKey, VERSION};
 use mcrs_minecraft_dimension::{Dimension, DimensionType};
 use mcrs_minecraft_protocol::ColumnPos;
@@ -32,7 +33,7 @@ use mcrs_minecraft_protocol::packets::game::serverbound::{
     ServerboundConfigurationAcknowledged, ServerboundKeepAlive as ServerboundGameKeepAlive,
 };
 use mcrs_minecraft_protocol::packets::table::Row;
-use mcrs_minecraft_protocol::{Encode, Look, Packet, WritePacket, uuid::Uuid};
+use mcrs_minecraft_protocol::{Encode, Packet, WritePacket, uuid::Uuid};
 use mcrs_minecraft_registries::{CurrentRegistries, Namer, ReceivedTags};
 use md5::{Digest, Md5};
 use std::net::SocketAddr;
@@ -644,7 +645,7 @@ fn on_player_position(
     else {
         return;
     };
-    if !position.flags.0.is_empty() {
+    if !position.flags.is_empty() {
         // chisle: every relative flag is treated as absolute. Our server
         // only ever sends absolute teleports; the upgrade is vanilla's
         // `PositionMoveRotation.calculateAbsolute`.
@@ -707,9 +708,9 @@ mod tests {
     use mcrs_minecraft_dimension::{Dimension, DimensionType};
     use mcrs_minecraft_entity::keys::CAT_VARIANT;
     use mcrs_minecraft_entity::variant::CatVariant;
+    use mcrs_minecraft_game_mode::GameMode;
     use mcrs_minecraft_nbt::tag::NbtTag;
     use mcrs_minecraft_protocol::Decode;
-    use mcrs_minecraft_protocol::GameMode;
     use mcrs_minecraft_protocol::VarInt;
     use mcrs_minecraft_protocol::decode::PacketDecoder;
     use mcrs_minecraft_protocol::entity::player::PlayerSpawnInfo;

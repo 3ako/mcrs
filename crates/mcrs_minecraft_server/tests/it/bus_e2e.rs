@@ -28,7 +28,6 @@ struct InboundLog(Vec<i32>);
 fn build_app() -> App {
     let mut app = host_app::make_host_app();
     app.init_resource::<PlayerSessionCounter>();
-    app.init_resource::<mcrs_minecraft_level::world::in_flight::InFlightMoves>();
     app.add_systems(Update, bridge_inbound_to_channel);
     app
 }
@@ -239,7 +238,7 @@ fn messages_sent_before_a_dimension_boots_arrive_in_order_on_its_first_tick() {
                     username: "readiness_player".into(),
                     position: bevy_math::DVec3::ZERO,
                     rotation: bevy_math::Vec2::ZERO,
-                    view_distance: 12,
+                    client_info: Some(crate::support::client_info_with_view_distance(12)),
                 },
                 dimensions: Vec::new().into(),
             }));
