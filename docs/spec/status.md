@@ -6,9 +6,9 @@
 | Protocol version | `1073742166` |
 
 This document states the STATUS state of the game protocol. A client uses this
-state to get the server list entry of a server: the message of the day, the
-player counts, a sample of player names and the game version. It also uses the
-state to measure the round-trip time.
+state to get the server list entry of a server. The entry holds the message of
+the day, the player counts, a sample of player names and the game version. The
+client also uses the state to measure the round-trip time.
 
 This document states only what a client, a server or a packet capture can see.
 It does not prescribe an architecture. Every rule comes from the responses of a
@@ -19,9 +19,10 @@ captured responses.
 
 ### 0.1 Terms
 
-- **Server**, **client**, **vanilla server**, **direction**, **clientbound**,
-  **serverbound**, **VarInt**, **frame**, **state**, **handshake**, **intent**: as
-  `login.md`, section 0.1, defines them.
+- **Server**, **client**, **vanilla server**, **vanilla client**, **direction**,
+  **clientbound**, **serverbound**, **VarInt**, **frame**, **state**,
+  **handshake**, **intent**, **offline mode**: as `login.md`, section 0.1,
+  defines them.
 - **Status exchange**: one connection that starts with a handshake with intent
   `1`.
 - **Status request**: the serverbound packet `status_request`.
@@ -114,7 +115,7 @@ The document names data, never code. It uses these names of the game:
 | clientbound | `0x01` | `pong_response` |
 
 Provenance: `black_box_confirmed` (`assets/mcrs/reports/packets.json`, E1).
-Confidence: high.
+Kind: wire. Confidence: high.
 
 ### STATUS-PKT-002: Field layouts
 
@@ -130,7 +131,7 @@ Confidence: high.
 - **Behavior:** the server sends the frames of a status exchange without
   compression. The STATUS state has no compression and no cipher layer.
 
-Provenance: `black_box_confirmed` (E1). Confidence: high.
+Provenance: `black_box_confirmed` (E1). Kind: wire. Confidence: high.
 
 ## 2. Sequence
 
@@ -149,7 +150,7 @@ Provenance: `black_box_confirmed` (E1). Confidence: high.
 - **Behavior:** the server closes the connection directly after the pong. In
   E1, the close came less than 50 ms after the ping.
 
-Provenance: `black_box_confirmed` (E1, E2). Confidence: high.
+Provenance: `black_box_confirmed` (E1, E2). Kind: wire. Confidence: high.
 
 ### STATUS-SEQ-002: One status request per connection
 
@@ -158,7 +159,7 @@ Provenance: `black_box_confirmed` (E1, E2). Confidence: high.
 - **Edge cases:** when the client sends a second status request, the server
   sends no packet and closes the connection.
 
-Provenance: `black_box_confirmed` (E3). Confidence: high.
+Provenance: `black_box_confirmed` (E3). Kind: semantic. Confidence: high.
 
 ### STATUS-SEQ-003: Ping without a status request
 
@@ -167,7 +168,7 @@ Provenance: `black_box_confirmed` (E3). Confidence: high.
 - **Edge cases:** after a pong, the connection is closed. The client cannot send
   a status request or a second ping on it.
 
-Provenance: `black_box_confirmed` (E4, E5). Confidence: high.
+Provenance: `black_box_confirmed` (E4, E5). Kind: semantic. Confidence: high.
 
 ### STATUS-SEQ-004: Idle timeout
 
@@ -178,8 +179,8 @@ Provenance: `black_box_confirmed` (E4, E5). Confidence: high.
 - **Edge cases:** this rule applies also after the status response, while the
   server waits for a ping.
 
-Provenance: `black_box_confirmed` (E6). Confidence: high. The measured close
-times were 30.002 s, 30.002 s and 50.007 s.
+Provenance: `black_box_confirmed` (E6). Kind: semantic. Confidence: high. The
+measured close times were 30.002 s, 30.002 s and 50.007 s.
 
 ### STATUS-SEQ-005: Protocol version of the handshake
 
@@ -189,8 +190,8 @@ times were 30.002 s, 30.002 s and 50.007 s.
   `version.protocol` is the version of the server, not the version of the
   client.
 
-Provenance: `black_box_confirmed` (E1, E7). Confidence: high for these two
-versions. No experiment used other versions (section 6).
+Provenance: `black_box_confirmed` (E1, E7). Kind: semantic. Confidence: high
+for these two versions. No experiment used other versions (section 6).
 
 ## 3. Response document
 
@@ -209,10 +210,12 @@ versions. No experiment used other versions (section 6).
 - **Behavior:** the vanilla server writes the keys in the order of the table.
 - **Behavior:** the vanilla server does not write the keys `favicon`,
   `enforcesSecureChat` or `preventsChatReports` in any experiment of this
-  document. E1 to E11 had no `server-icon.png` file.
+  document. No experiment had a `server-icon.png` file. All experiments had
+  `online-mode=false` and `enforce-secure-profile=false` (section 7.1).
 
-Provenance: `black_box_confirmed` (E1, E8). Confidence: high for the keys that
-the experiments show. A file `server-icon.png` can add a key (section 6).
+Provenance: `black_box_confirmed` (E1, E8). Kind: wire. Confidence: high for the
+keys that the experiments show. A file `server-icon.png` or other values of
+`online-mode` and `enforce-secure-profile` can add a key (section 6).
 
 ### STATUS-JSON-002: `description`
 
@@ -230,7 +233,8 @@ the experiments show. A file `server-icon.png` can add a key (section 6).
 - **Edge cases:** when `server.properties` has no `motd` key, the value is
   `A Minecraft Server`.
 
-Provenance: `black_box_confirmed` (E1, E8, E9, E10). Confidence: high.
+Provenance: `black_box_confirmed` (E1, E8, E9, E10). Kind: wire. Confidence:
+high.
 
 ### STATUS-JSON-003: `players`
 
@@ -238,7 +242,7 @@ Provenance: `black_box_confirmed` (E1, E8, E9, E10). Confidence: high.
 |-----|------|---------|
 | `max` | integer | always |
 | `online` | integer | always |
-| `sample` | array of sample entries | when at least one online player can be shown (STATUS-JSON-004) |
+| `sample` | array of sample entries | when there is at least one online player and `hide-online-players` is `false` (STATUS-JSON-004, STATUS-CFG-003) |
 
 - **Inputs:** the `max-players` property, and the online players.
 - **Behavior:** `max` is the value of `max-players`. The value `0` gives `0`.
@@ -248,7 +252,8 @@ Provenance: `black_box_confirmed` (E1, E8, E9, E10). Confidence: high.
 - **Edge cases:** `hide-online-players` does not change `online`
   (STATUS-CFG-003).
 
-Provenance: `black_box_confirmed` (E1, E8, E11, E12, E14). Confidence: high.
+Provenance: `black_box_confirmed` (E1, E8, E11, E12, E14). Kind: wire.
+Confidence: high.
 
 ### STATUS-JSON-004: `players.sample`
 
@@ -262,15 +267,15 @@ Each sample entry has these keys, in this order:
 - **Inputs:** the online players in the join order. `n` is the number of online
   players.
 - **Behavior:** when `n` is 12 or less, the sample holds all online players.
-- **Behavior:** when `n` is more than 12, the sample holds 12 players that are
-  adjacent in the join order. The server does these steps for each new
-  response document (STATUS-JSON-006):
-  1. Select a start position `s` at random, from `0` to `n − 12`.
-  2. Take the players at the positions `s` to `s + 11` of the join order.
-- **Behavior:** the window does not wrap from the end of the join order to the
-  start. With 15 players, the players that are not in the sample are always
-  one of these sets: `{12, 13, 14}`, `{0, 13, 14}`, `{0, 1, 14}`, `{0, 1, 2}`.
-- **Behavior:** the server puts the entries of the sample in a random order.
+- **Behavior:** when `n` is more than 12, the sample holds 12 of the online
+  players. The selection of the 12 players is unspecified. A parity test must
+  not compare it.
+- **Reference:** the reference selects a start position `s` at random, from `0`
+  to `n − 12`, for each new response document (STATUS-JSON-006). It takes the
+  players at the positions `s` to `s + 11` of the join order. The window does
+  not wrap from the end of the join order to the start.
+- **Behavior:** the order of the entries in the sample is unspecified. The
+  reference puts the entries in a random order.
 - **Behavior:** each online player occurs in the sample at most one time.
 - **Behavior:** a client must not give a meaning to the order of the sample.
 - **Edge cases:** in offline mode, `id` is the name-based UUID of version 3 for
@@ -278,10 +283,12 @@ Each sample entry has these keys, in this order:
   `b7fedf1d-4755-3933-8b95-94af66bb8fba`. This UUID comes from the login, not
   from the STATUS state.
 
-Provenance: `black_box_confirmed` (E11, E12, E13). Confidence: high for the
-limit of 12 and for the adjacent window, from 18 response documents with 15
+Provenance: `black_box_confirmed` (E11, E12, E13). Kind: semantic for the
+limit of 12, unspecified for the selection and the order. Confidence: high for
+the limit of 12 and for the adjacent window of the reference. The evidence is
+the 12 response documents of E12 and the six captures of E11, all with 15
 online players. Confidence: medium for the uniform choice of `s`. E12 showed
-the start positions 0, 1, 2 and 3 with the counts 3, 6, 2 and 2.
+the start positions 0, 1, 2 and 3 with the counts 3, 5, 2 and 2.
 
 ### STATUS-JSON-005: `version`
 
@@ -295,23 +302,25 @@ the start positions 0, 1, 2 and 3 with the counts 3, 6, 2 and 2.
 - **Behavior:** no server property changes them.
 
 Provenance: `black_box_confirmed` (`assets/minecraft/version.json`, E1, E7).
-Confidence: high.
+Kind: wire. Confidence: high.
 
 ### STATUS-JSON-006: Refresh of the response document
 
-- **Behavior:** the server sends the same response document to all status
-  requests in a period of 5 s.
+- **Behavior:** when no player joins or leaves, the server sends the same
+  response document in all status exchanges in a period of 5 s.
 - **Behavior:** after 5 s, the server makes a new response document. The new
   sample has a new start position and a new order (STATUS-JSON-004), also when
   the online players are the same.
-- **Behavior:** when a player joins or leaves, the next status request gets a
+- **Behavior:** when a player joins or leaves, the next status exchange gets a
   new response document. `online` and the sample show the change at once. In
   E13 and E14, the change was visible in less than 0.5 s.
 - **Behavior:** a join also starts a new period of 5 s.
 
-Provenance: `black_box_confirmed` (E12, E13, E14). Confidence: medium. The
-probe has a resolution of about 1 s. The measured periods were 4.5 s to 5.3 s.
-No experiment measured if a leave starts a new period.
+Provenance: `black_box_confirmed` (E12, E13, E14). Kind: semantic. Confidence:
+medium. The probe has a resolution of about 1 s. The measured periods were
+4.5 s to 5.3 s. No experiment measured if a leave starts a new period. No
+experiment shows if the server takes the response document at the handshake or
+at the status request (section 6).
 
 ## 4. Server inputs
 
@@ -321,7 +330,9 @@ No experiment measured if a leave starts a new period.
 - **Behavior:** the server reads the value when it starts. A change of the file
   has an effect only after a restart.
 
-Provenance: `black_box_confirmed` (E8, E9, E10). Confidence: high.
+Provenance: `black_box_confirmed` (E8, E9, E10). Kind: semantic. Confidence:
+high for the first behavior. Confidence: medium for the second behavior,
+because no experiment changed the file while the server ran.
 
 ### STATUS-CFG-002: `max-players`
 
@@ -329,7 +340,8 @@ Provenance: `black_box_confirmed` (E8, E9, E10). Confidence: high.
   gives `7`, and the value `0` gives `0`.
 - **Edge cases:** the default value is `20`.
 
-Provenance: `black_box_confirmed` (E1, E8, E15). Confidence: high.
+Provenance: `black_box_confirmed` (E1, E8, E15). Kind: semantic. Confidence:
+high.
 
 ### STATUS-CFG-003: `hide-online-players`
 
@@ -338,17 +350,18 @@ Provenance: `black_box_confirmed` (E1, E8, E15). Confidence: high.
 - **Behavior:** `players.online` and `players.max` stay the same as with the
   value `false`.
 
-Provenance: `black_box_confirmed` (E16). Confidence: high.
+Provenance: `black_box_confirmed` (E16). Kind: semantic. Confidence: high.
 
 ### STATUS-CFG-004: `enable-status`
 
 - **Behavior:** when the value is `false`, the server sends no packet in a
-  status exchange. It closes the connection when it receives a status request.
-- **Behavior:** when the value is `false`, it also closes the connection when it
-  receives a ping. It does not send a pong.
+  status exchange. It does not send a status response or a pong.
+- **Behavior:** when the value is `false`, the server closes the connection.
 - **Edge cases:** the default value is `true`.
 
-Provenance: `black_box_confirmed` (E17). Confidence: high.
+Provenance: `black_box_confirmed` (E17). Kind: semantic. Confidence: high. E17
+sends its first packet directly after the handshake. It does not show if the
+close comes after the handshake or after that packet (section 6).
 
 ## 5. Conformance checks
 
@@ -364,7 +377,7 @@ STATUS-JSON-006.
 | E6 closes at 30 s and at 50 s | STATUS-SEQ-004 |
 | E10 gives a document without `description` | STATUS-JSON-002 |
 | E11 gives a sample of 12 entries with 15 online players | STATUS-JSON-004 |
-| In E12, the missing players are the players before position `s` and after position `s + 11`, with `s` from 0 to 3: `{12, 13, 14}`, `{0, 13, 14}`, `{0, 1, 14}` or `{0, 1, 2}` | STATUS-JSON-004 |
+| In E12, each sample holds 12 different players of the 15 online players | STATUS-JSON-004 |
 | E16 gives a document without `players.sample` | STATUS-CFG-003 |
 | E17 gives a close without a packet | STATUS-CFG-004 |
 
@@ -382,11 +395,31 @@ the types and the values must agree.
   then repeat E11.
 - **Unknown packet.** No experiment sent a packet id other than `0x00` or
   `0x01`, or a packet with extra bytes.
-- **Long text.** No experiment measured a limit on the length of `motd`.
+- **Long text.** No experiment measured a limit on the length of `motd` or of
+  the response document. Proposed experiment: set a `motd` of 40000 characters
+  and repeat E1.
 - **Other protocol versions.** E7 used only the version `5`. Proposed
   experiment: repeat E7 with `0`, a negative version and `1073742167`.
 - **Join order after a leave.** No experiment made a player leave from the
   middle of the join order and then read the sample.
+- **Secure chat.** All experiments had `online-mode=false` and
+  `enforce-secure-profile=false`. Other values of these properties can add the
+  key `enforcesSecureChat`. Proposed experiment: set both properties to `true`,
+  then repeat E1.
+- **Time of the response document.** In E13 and E14, the probe sent each status
+  request directly after the handshake. In E6 (c), no player joined between the
+  handshake and the status request. No experiment shows if the server takes the
+  response document at the handshake or at the status request.
+  Proposed experiment: send the handshake, join a player, wait 1 s, and then
+  send a status request.
+- **Close with `enable-status=false`.** E17 does not show if the server closes
+  the connection after the handshake or after the first packet. Proposed
+  experiment: set `enable-status=false`, send only the handshake, and read 5 s.
+- **Part of a frame.** No experiment sent a frame in parts with a pause between
+  them. It is not known if each received byte sets the idle time to zero, or
+  only a complete packet.
+- **Server start.** All experiments started after the log line `Done`. No
+  experiment sent a status exchange while the server prepared its world.
 
 ## 7. Experiments
 
@@ -576,9 +609,10 @@ E11, capture 6:
 {"description":"A Minecraft Server","players":{"max":20,"online":15,"sample":[{"id":"3c122e9b-bd92-3320-bafd-927ef5e89be4","name":"bot10"},{"id":"25686541-576e-3601-96ea-2aa4cb9afa94","name":"bot01"},{"id":"88605d7e-d180-3c93-aa45-88a8fefd609e","name":"bot05"},{"id":"c1f80fd8-6b9e-3ba7-b676-d522e37a6a2e","name":"bot11"},{"id":"2aefc396-b4dc-3b3a-a447-2a8439f9bd23","name":"bot04"},{"id":"42857abc-d860-3fa9-813c-4c0f019fcb53","name":"bot08"},{"id":"12ef748b-a7df-33d8-a8b8-35fbb5ead07b","name":"bot03"},{"id":"e5719c3f-2331-3909-88a9-f752cf82a079","name":"bot09"},{"id":"bc93b0c2-ec2e-3e4d-aad2-edc9b2e76bc3","name":"bot06"},{"id":"8bc9b6cf-cadf-39fd-a553-36e7e837dd38","name":"bot12"},{"id":"b7fedf1d-4755-3933-8b95-94af66bb8fba","name":"bot02"},{"id":"0c9f36f5-17f5-3345-a016-807efd763dac","name":"bot07"}]},"version":{"name":"26.4 Snapshot 4","protocol":1073742166}}
 ```
 
-E12. Each line gives the wall-clock time at which the document changed,
-`players.online`, the sample as numbers of the names `botNN`, and the names
-that are not in the sample. The players joined in the order `bot00` to `bot14`:
+E12. Each line gives the wall-clock time at which the document changed and
+`players.online`. Then it gives the sample and the names that are not in the
+sample. A name `botNN` shows as the number `NN`. The players joined in the order
+`bot00` to `bot14`:
 
 ```text
 20:50:42.766 15 05 03 11 01 10 07 12 02 04 09 08 06  missing: 00 13 14
